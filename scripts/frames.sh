@@ -18,10 +18,12 @@ fi
 DIR="$1"; shift
 RAW="$DIR/raw.mp4"
 EXT="jpg"
-SCENE="0.07"
+SCENE="0.09"
 MIN_GAP="5"
 HASH_THRESHOLD="5999"
-BLUR_THRESHOLD_INT="10"  # Threshold after scaling blur_abs*1e6; lower => stricter
+# determine stream time_base denominator (e.g., 90000)
+TIME_BASE_DEN=$(ffprobe -v error -select_streams v:0 -show_entries stream=time_base -of csv=p=0 "$RAW" | awk -F'/' '{print $2}')
+if [[ -z "$TIME_BASE_DEN" ]]; then TIME_BASE_DEN=90000; fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,7 +31,6 @@ while [[ $# -gt 0 ]]; do
     --scene)          SCENE="$2"; shift 2;;
     --min-gap)        MIN_GAP="$2"; shift 2;;
     --hash-threshold) HASH_THRESHOLD="$2"; shift 2;;
-    --blur-threshold-int) BLUR_THRESHOLD_INT="$2"; shift 2;;
     *) error "Unknown option: $1"; exit 1;;
   esac
 done
@@ -41,88 +42,160 @@ mkdir -p "$FRAME_DIR" "$SEG_DIR"
 ###############################################################################
 # 1. Dynamic segmentation                                                     #
 ###############################################################################
-if [[ ! -f "$RAW" ]]; then
-  error "Missing input $RAW"; exit 1
-fi
+# if [[ ! -f "$RAW" ]]; then
+#   error "Missing input $RAW"; exit 1
+# fi
 
-if [[ -z "$(ls -A "$SEG_DIR" 2>/dev/null)" ]]; then
-  DURATION=$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of csv=p=0 "$RAW")
-  DURATION=${DURATION%.*} # truncate to int seconds
-  if (( DURATION <= 600 )); then N=2
-  elif (( DURATION <= 1800 )); then N=3
-  elif (( DURATION <= 3600 )); then N=6
-  else N=$(((DURATION + 599)/600))
-  fi
-  SEG_LEN=$(((DURATION + N - 1)/N))
-  info "Splitting into $N segments, ~${SEG_LEN}s each"
+# if [[ -z "$(ls -A "$SEG_DIR" 2>/dev/null)" ]]; then
+#   DURATION=$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of csv=p=0 "$RAW")
+#   DURATION=${DURATION%.*} # truncate to int seconds
+#   if (( DURATION <= 600 )); then N=2
+#   elif (( DURATION <= 1800 )); then N=3
+#   elif (( DURATION <= 3600 )); then N=6
+#   else N=$(((DURATION + 599)/600))
+#   fi
+#   SEG_LEN=$(((DURATION + N - 1)/N))
+#   info "Splitting into $N segments, ~${SEG_LEN}s each"
 
-  "$FFMPEG" -hide_banner -loglevel error -y -i "$RAW" \
-    -c copy -map 0 -segment_time "$SEG_LEN" -f segment "$SEG_DIR/seg%04d.mp4"
-else
-  info "Segments already exist, skipping split"
-fi
+#   "$FFMPEG" -hide_banner -loglevel error -y -i "$RAW" \
+#     -c copy -map 0 -segment_time "$SEG_LEN" -reset_timestamps 0 -f segment "$SEG_DIR/seg%04d.mp4"
+# else
+#   info "Segments already exist, skipping split"
+# fi
+
 
 ###############################################################################
 # 2. Keyframe extraction                                                      #
 ###############################################################################
-export FFMPEG EXT SCENE MIN_GAP FRAME_DIR MAX_JOBS
+export FFMPEG EXT SCENE MIN_GAP FRAME_DIR MAX_JOBS SEG_LEN
+
 extract_frames() {
-  local seg="$1"
-  local bn
-  bn=$(basename "$seg" .mp4)
+  # Extract keyframes directly from the full video ($RAW) and name with pts_time
   local codec_args
   if [[ "$EXT" == "jpg" ]]; then
     codec_args="-q:v 4 -c:v mjpeg -pix_fmt yuvj420p -strict unofficial"
   else
     codec_args="-compression_level 3 -c:v png"
   fi
-  "$FFMPEG" -hide_banner -loglevel error -i "$seg" \
-    -vf "select='gt(scene,${SCENE})',fps=fps=1/${MIN_GAP},scale=480:270" \
-    -vsync vfr -frame_pts 1 $codec_args -threads 2 \
-    "$FRAME_DIR/tmp_${bn}_%06d.${EXT}" || return 1
+  
+
+  # -vf "select='gt(scene,${SCENE})',fps=fps=1/${MIN_GAP},scale=480:270" \
+  # First extract frames with sequential numbering
+  "$FFMPEG" -hide_banner -loglevel error -copyts -i "$RAW" \
+    -vf "select='gt(scene,${SCENE})',scale=480:270" \
+    -vsync 0 -frame_pts 1 $codec_args -threads 2 \
+    "$FRAME_DIR/temp_%012d.${EXT}" || return 1
+  
+  FRAME_EXTRACT_RESULT=$(find "$FRAME_DIR" -type f -name "*.${EXT}" | sort)
+  info "frame extract result:"
+  info "$FRAME_EXTRACT_RESULT"
+
+  # -vf "select='gt(scene,${SCENE})',fps=fps=1/${MIN_GAP},showinfo" \
+  info "Get timestamps using showinfo filter"
+  "$FFMPEG" -hide_banner -loglevel info -copyts -i "$RAW" \
+    -vf "select='gt(scene,${SCENE})',showinfo" \
+    -vsync 0 -f null - 2>&1 | \
+    grep 'pts_time:' | \
+    sed 's/.*pts_time:\([0-9.]*\).*/\1/' > "$FRAME_DIR/timestamps.txt"
+  
+  info "Check if timestamps were extracted"
+  if [[ ! -s "$FRAME_DIR/timestamps.txt" ]]; then
+    info "Warning: No timestamps extracted, keeping original filenames"
+    # Rename temp files to final format without timestamps
+    for temp_file in "$FRAME_DIR"/temp_*.${EXT}; do
+      if [[ -f "$temp_file" ]]; then
+        num=$(basename "$temp_file" | sed "s/temp_0*\([0-9]*\)\.${EXT}/\1/")
+        mv "$temp_file" "$FRAME_DIR/frame_${num}.${EXT}"
+      fi
+    done
+    # rm -f "$FRAME_DIR/timestamps.txt"
+    return 0
+  fi
+  
+  info "Rename files using the timestamps"
+
+  # Rename temp files to match timestamps one-to-one (avoid bash 4-only mapfile)
+  if ls "$FRAME_DIR"/temp_*.${EXT} >/dev/null 2>&1; then
+    paste <(ls "$FRAME_DIR"/temp_*.${EXT} | sort) "$FRAME_DIR/timestamps.txt" | \
+    while IFS=$'\t' read -r temp_file timestamp; do
+      # Safety: stop if either field is empty
+      [[ -z "$temp_file" || -z "$timestamp" ]] && break
+
+      # Convert timestamp to HH_MM_SS_mmm format
+      h=$(awk "BEGIN {printf \"%02d\", int($timestamp/3600)}")
+      m=$(awk "BEGIN {printf \"%02d\", int(($timestamp%3600)/60)}")
+      s=$(awk "BEGIN {printf \"%02d\", int($timestamp%60)}")
+      ms=$(awk "BEGIN {printf \"%03d\", int(($timestamp - int($timestamp)) * 1000)}")
+
+      new_name="frame_${h}_${m}_${s}_${ms}.${EXT}"
+      mv -f "$temp_file" "$FRAME_DIR/$new_name"
+    done
+  else
+    info "No temp files found to rename"
+  fi
+
+  RENAME_RESULT=$(find "$FRAME_DIR" -type f -name "*.${EXT}" | sort)
+  info "rename result:"
+  info "$RENAME_RESULT"
+  
+  # Clean up temporary file
+  # rm -f "$FRAME_DIR/timestamps.txt"
 }
 
-# Export the function for GNU Parallel
-export -f extract_frames
+# (Parallel extraction disabled to avoid filename conflicts)
 
 if [[ -z "$(ls -A "$FRAME_DIR" 2>/dev/null)" ]]; then
-  info "Extracting frames in parallel"
-  find "$SEG_DIR" -name 'seg*.mp4' | parallel -j "$MAX_JOBS" --halt soon,fail=1 extract_frames {}
+  info "Extracting keyframes from full video"
+  extract_frames
 else
   info "Frame directory already populated, skipping extraction"
 fi
 
-###############################################################################
-# 3. Rename frames to original timestamp                                      #
-###############################################################################
-# 邏輯嚴重錯誤，造成處理好的的檔案消失
+KEYFRAME_RESULT=$(find "$FRAME_DIR" -type f -name "*.${EXT}" | sort)
 
-# rename_frames() {
+info "keyframe result: $KEYFRAME_RESULT"
+
+
+###############################################################################
+# 3. Rename frames to HH_MM_SS_mmm filenames                                  #
+###############################################################################
+# FFmpeg 以 frame_pts 產生檔名 frame_<ticks>.EXT（ticks 依原始 time_base，如 1/90000）
+# 此處將其轉換成 HH_MM_SS_mmm.EXT
+
+# format_timestamp_filename() {
 #   local f="$1"
-#   # pts in microseconds stored in name after last _ before ext
-#   local pts=${f##*_}
-#   pts=${pts%.*}
-#   # Convert to base10 to avoid leading-zero octal issue
-#   local pts_dec=$((10#$pts))
-#   # ffmpeg frame_pts 1 gives pts starting at 0 based on segment; need offset
-#   local seg_bn idx offset total_ms
-#   seg_bn=$(basename "$f")
-#   seg_bn=${seg_bn#tmp_}
-#   seg_bn=${seg_bn%%_*}
-#   idx=${seg_bn#seg}
-#   idx=$((10#$idx))
-#   offset=$((idx * SEG_LEN * 1000)) # ms
-#   total_ms=$(((pts_dec/90) + offset)) # 90kHz clock
-#   hh=$((total_ms/3600000))
-#   mm=$(((total_ms%3600000)/60000))
-#   ss=$(((total_ms%60000)/1000))
-#   ms=$(((total_ms%1000)))
-#   printf -v stamp '%02d%02d%02d%03d' "$hh" "$mm" "$ss" "$ms"
-#   mv "$f" "$FRAME_DIR/${stamp}.${EXT}"
+#   local file seg pts pts_ms secs ms hh mm ss new target
+#   file=$(basename "$f")
+#   pts=${file#frame_}; pts=${pts%.*}   # integer ticks
+#   pts_ms=$(( pts * 1000 / TIME_BASE_DEN ))
+#   secs=$((pts_ms / 1000))
+#   ms=$(printf "%03d" $((pts_ms % 1000)))
+#   hh=$(printf "%02d" $((secs / 3600)))
+#   mm=$(printf "%02d" $(((secs % 3600) / 60)))
+#   ss=$(printf "%02d" $((secs % 60)))
+#   new=$(printf "%02d_%02d_%02d_%03d.%s" "$hh" "$mm" "$ss" "$ms" "$EXT")
+#   target="$FRAME_DIR/$new"
+#   if [[ -e "$target" ]]; then
+#     local dup=1
+#     while [[ -e "${target%.*}_$dup.${EXT}" ]]; do
+#       dup=$((dup+1))
+#     done
+#     target="${target%.*}_$dup.${EXT}"
+#   fi
+#   mv -n "$f" "$target"
 # }
+# # not exporting since no parallel
 
-# info "Renaming frames to timestamp filenames"
-# find "$FRAME_DIR" -name 'tmp_*' | while read -r f; do rename_frames "$f"; done
+
+# info "Renaming frames to HH_MM_SS_mmm format"
+# shopt -s nullglob
+# for f in "$FRAME_DIR"/frame_*.$EXT; do
+#   format_timestamp_filename "$f"
+# done
+
+# RENAME_RESULT=$(find "$FRAME_DIR" -type f -name "*.${EXT}" | sort)
+# info "rename result: \n$RENAME_RESULT"
+
 
 ###############################################################################
 # 4. Deduplicate frames (ImageMagick phash)                                   #
@@ -138,7 +211,7 @@ mkdir -p "$(dirname "$DEDUP_LOG")"
 info "Deduplicating frames with threshold $HASH_THRESHOLD"
 last_keep=""
 
-不在 ffmpeg 與 ImageMagick 處理過濾模糊圖片，效果不理想。
+# 不在 ffmpeg 與 ImageMagick 處理過濾模糊圖片，效果不理想。
 # for img in $(find "$FRAME_DIR" -type f -name "*.${EXT}" | sort); do
 
 #   # Blur detection using Laplacian mean; low values indicate blur
