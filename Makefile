@@ -28,6 +28,22 @@ $(shell mkdir -p $(LOG_DIR))
 export
 
 # -----------------------------------------------------------------------------
+# Validate required configuration and apply MAX_JOBS for parallelism
+# -----------------------------------------------------------------------------
+REQUIRED_VARS := GEMINI_API_KEY GEMINI_MODEL_ID WHISPER_BIN WHISPER_MODEL
+MISSING := $(strip $(foreach v,$(REQUIRED_VARS),$(if $($(v)),,$(v))))
+ifeq ($(MISSING),)
+  # All required variables present
+else
+  $(error Missing required variables in .env: $(MISSING))
+endif
+
+# Apply parallel jobs setting if provided
+ifneq ($(strip $(MAX_JOBS)),)
+  MAKEFLAGS += -j$(MAX_JOBS)
+endif
+
+# -----------------------------------------------------------------------------
 # Helper functions (bash) used inside $(shell) context
 # Detect SHA1 hashing command (sha1sum on Linux, shasum on macOS)
 ifeq ($(shell command -v sha1sum >/dev/null 2>&1 && echo yes),yes)
@@ -114,7 +130,8 @@ $(SRC_DIR)/%/ocr.done: $(SRC_DIR)/%/frames.done
 # 			( $(SHELL) scripts/final_summary.sh "$(@D)" 2>&1 | sed -u "s/^/[final $(notdir $(@D))] /" ) &
 
 # all: download audio frames srt ocr final
-all: download audio srt frames ocr
+# all: download audio srt frames ocr
+all: download audio srt frames
 
 # -----------------------------------------------------------------------------
 # House-keeping ----------------------------------------------------------------
