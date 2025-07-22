@@ -90,10 +90,11 @@ $(SRC_DIR)/%/download.done:
 # Each depends on .done of previous stage
 # Parallelised via GNU make -j or MAX_JOBS
 # -----------------------------------------------------------------------------
-.PHONY: audio srt frames ocr final all
+.PHONY: audio srt frames pre_srt_summary ocr final all
 
 audio: $(addsuffix /audio.done,$(HASHED_DIRS))
 frames: $(addsuffix /frames.done,$(HASHED_DIRS))
+pre_srt_summary: $(addsuffix /pre_srt_summary.done,$(HASHED_DIRS))
 srt:    $(addsuffix /srt.done,$(HASHED_DIRS))
 ocr:    $(addsuffix /ocr.done,$(HASHED_DIRS))
 # final:  $(addsuffix /final.done,$(HASHED_DIRS))
@@ -119,19 +120,29 @@ $(SRC_DIR)/%/frames.done: $(SRC_DIR)/%/audio.done
 		wait $$pid; \
 	}
 
-$(SRC_DIR)/%/ocr.done: $(SRC_DIR)/%/frames.done
+$(SRC_DIR)/%/pre_srt_summary.done: $(SRC_DIR)/%/frames.done
 	{ \
-		$(SHELL) scripts/ocr.sh "$(@D)" 2>&1 | sed -u "s/^/[ocr $(notdir $(@D))] /" & pid=$$!; \
+		$(SHELL) scripts/pre_srt_summary.sh "$(@D)" 2>&1 | sed -u "s/^/[pre_srt_summary $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
 		wait $$pid; \
 	}
+
+
+
+
+# $(SRC_DIR)/%/ocr.done: $(SRC_DIR)/%/frames.done
+# 	{ \
+# 		$(SHELL) scripts/ocr.sh "$(@D)" 2>&1 | sed -u "s/^/[ocr $(notdir $(@D))] /" & pid=$$!; \
+# 		trap 'kill $$pid 2>/dev/null' INT TERM; \
+# 		wait $$pid; \
+# 	}
 
 # $(SRC_DIR)/%/final.done: $(SRC_DIR)/%/ocr.done $(SRC_DIR)/%/srt.done
 # 			( $(SHELL) scripts/final_summary.sh "$(@D)" 2>&1 | sed -u "s/^/[final $(notdir $(@D))] /" ) &
 
 # all: download audio frames srt ocr final
-# all: download audio srt frames ocr
-all: download audio srt frames
+# all: download audio srt frames pre_srt_summary ocr
+all: download audio srt frames pre_srt_summary
 
 # -----------------------------------------------------------------------------
 # House-keeping ----------------------------------------------------------------

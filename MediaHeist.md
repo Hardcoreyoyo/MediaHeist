@@ -17,8 +17,19 @@ ffmpeg 必須至少間隔 5 秒擷取影格並使用場景偵測 gt(scene,0.06) 
 處理完畢後利用工具加上去除重複圖片的邏輯。
 
 
-/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/final_summary.sh
-利用 llm 將 srt 做重點整理與分析，根據秒數去抓取對應(最靠近)時間的圖片 (圖片檔案在儲存時都是以特殊形式命名，並且會包含時間，可以再用邏輯判斷)，(決定用 ollama run qwen3:4b) 
+
+利用 llm 將 srt 檔案內容做重點整理與分析(決定用 ollama run qwen3:4b)，輸出一份 markdown 檔案。
+輸出資料的格式如 prompt.txt 中的內容。
+
+
+
+根據秒數去抓取對應(最靠近)時間的圖片 (圖片檔案在儲存時都是以特殊形式 frame_00_06_18_600.jpg 命名，代表 frame_小時_分鐘_秒數_毫秒.jpg，可以再用邏輯判斷)，(決定用 ollama run qwen3:4b) 
+
+
+
+
+
+
 
 最後用
 ocrit
