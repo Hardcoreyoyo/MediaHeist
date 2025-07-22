@@ -18,7 +18,7 @@ fi
 DIR="$1"; shift
 RAW="$DIR/raw.mp4"
 EXT="jpg"
-SCENE="0.09"
+SCENE="0.05"
 MIN_GAP="5"
 HASH_THRESHOLD="5999"
 # determine stream time_base denominator (e.g., 90000)

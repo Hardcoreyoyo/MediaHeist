@@ -18,22 +18,18 @@ ffmpeg 必須至少間隔 5 秒擷取影格並使用場景偵測 gt(scene,0.06) 
 
 
 /Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/final_summary.sh
-利用 llm 將 srt 做重點整理與分析，根據秒數去抓取對應(最靠近)時間的圖片 (圖片檔案在儲存時都是以特殊形式命名，並且會包含時間，可以再用邏輯判斷)，
-(
-  還沒決定用哪個模型
-  yi:6b-200k
-  llama3.2:3b
-  qwen3:4b
-  deepseek-r1:1.5b
-  gemma3:4b
-) 
+利用 llm 將 srt 做重點整理與分析，根據秒數去抓取對應(最靠近)時間的圖片 (圖片檔案在儲存時都是以特殊形式命名，並且會包含時間，可以再用邏輯判斷)，(決定用 ollama run qwen3:4b) 
 
 最後用
 ocrit
 + 
 ollama run qwen2.5vl:3b-q4_K_M "詳細完整敘述這張圖片任何細節，圖形，表格，文字，並使用繁體中文回覆 /Users/danos/xxxx.jpg" 
-去分析全部被選中的圖片，
-分析被選中的圖片是否有沒有真的符合 srt 的內容。沒有符合的話，找該圖片的前後 5 秒的圖片(共兩張)，再用做一次圖片分析流程(ocrit + ollama run qwen2.5vl:3b-q4_K_M) 選擇一張，最後要有個規則來限制，不能無限一直找下去。
+
+利用  LLM (ollama run qwen3:4b) 去分析全部被選中的圖片敘述，
+分析被選中的圖片敘述是否有沒有真的符合 srt 的內容。沒有符合的話，找該圖片的前後 5 秒的圖片(共兩張)，再用做一次圖片分析流程(ocrit + ollama run qwen2.5vl:3b-q4_K_M) 選擇一張，最後要有個規則來限制，不能無限一直找下去。
+
+
+最後要依照最終選出的圖片時間資料去重新抓取高清的影片截圖。
 
 
 

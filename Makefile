@@ -11,6 +11,17 @@ SRC_DIR := src
 TMP_DIR := tmp
 SUMMARY_DIR := summary
 
+# Central logging (one file per make invocation)
+LOG_DIR := logs
+START_TS := $(shell date '+%m%d_%H%M%S')
+LOG_FILE := $(LOG_DIR)/$(START_TS).log
+
+# Make sure LOG_FILE propagates to every recipe's environment
+export LOG_FILE LOG_DIR
+
+# Ensure log directory exists before anything runs
+$(shell mkdir -p $(LOG_DIR))
+
 # Inherit env from caller or .env
 -include .env
 # Export all variables (including those from .env) to recipe environment

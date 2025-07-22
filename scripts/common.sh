@@ -16,6 +16,21 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/$(date '+%m%d_%H%M%S').log}"
+export LOG_FILE
+
+# -----------------------------------------------------------------------------
+# Redirect all subsequent stdout and stderr to both console and $LOG_FILE.
+# Guard with MH_LOG_REDIRECTED to avoid setting up multiple tee processes when
+# common.sh is sourced repeatedly within the same shell.
+# -----------------------------------------------------------------------------
+if [[ -z "${MH_LOG_REDIRECTED:-}" ]]; then
+  export MH_LOG_REDIRECTED=1
+  # Use exec + process substitution so that *everything* (including output from
+  # external commands) is appended to the log while still streaming to the
+  # original stdout/stderr. We deliberately append (>>), allowing multiple
+  # scripts/stages to share the same log file.
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
 
 ###############################################################################
 # Logging helpers                                                              #
