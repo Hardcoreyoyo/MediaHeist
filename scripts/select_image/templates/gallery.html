@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Image Selector</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 0; padding: 1rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); grid-gap: 8px; }
+.grid img { width: 100%; height: auto; cursor: pointer; transition: box-shadow .2s; }
+.grid img:hover { box-shadow: 0 0 8px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+<h2>Click an image to select</h2>
+<div class="grid">
+{% for img in images %}
+  <img src="/static/{{ img }}" alt="{{ img }}" data-file="{{ img }}" />
+{% endfor %}
+</div>
+<script>
+async function postSelection(file) {
+  const res = await fetch('/select', {method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({filename: file})});
+  if (res.ok) { alert('Selected: ' + file); }
+  else { alert('Error: ' + (await res.text())); }
+}
+
+document.querySelectorAll('img').forEach(img => {
+  img.addEventListener('click', () => postSelection(img.dataset.file));
+});
+</script>
+</body>
+</html>
