@@ -1,0 +1,52 @@
+[
+  {
+    "rank": 1,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_01_032.jpg",
+    "score": 0.9333509802818298
+  },
+  {
+    "rank": 2,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_01_066.jpg",
+    "score": 0.9337995052337646
+  },
+  {
+    "rank": 3,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_27_266.jpg",
+    "score": 0.9339100122451782
+  },
+  {
+    "rank": 4,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_01_000.jpg",
+    "score": 0.935594379901886
+  },
+  {
+    "rank": 5,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_01_100.jpg",
+    "score": 0.9367971420288086
+  },
+  {
+    "rank": 6,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_09_000.jpg",
+    "score": 0.9397960901260376
+  },
+  {
+    "rank": 7,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_05_333.jpg",
+    "score": 0.9398179650306702
+  },
+  {
+    "rank": 8,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_23_266.jpg",
+    "score": 0.9414201974868774
+  },
+  {
+    "rank": 9,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_09_034.jpg",
+    "score": 0.9425384402275085
+  },
+  {
+    "rank": 10,
+    "path": "/Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/rag/frames/frame_00_00_22_100.jpg",
+    "score": 0.9427337646484375
+  }
+]

@@ -21,7 +21,7 @@ if [[ -z "$DIR" ]]; then
 
 SRT="$DIR/transcript.srt.srt"
 PROMPT_FILE="$(cd "$(dirname "$0")/.." && pwd)/prompt.txt"
-# MODEL="${PRE_SUMMARY_MODEL:-qwen3-4b-tune:latest}"
+MODEL="${PRE_SUMMARY_MODEL:-qwen3-4b-tune:latest}"
 
 # qwen3-4b-tune:latest
 # qwen2.5vl:7b-q4_K_M         
@@ -46,7 +46,7 @@ command -v jq   >/dev/null 2>&1 || { error "jq not found"; exit 1; }
 # -----------------------------------------------------------------------------
 # Build prompt and invoke LLM
 # -----------------------------------------------------------------------------
-# info "Generating pre-SRT summary for $(basename "$DIR") using $MODEL"
+info "Generating pre-SRT summary for $(basename "$DIR") using $MODEL"
 SYS_PROMPT="$(cat "$PROMPT_FILE")"
 USER_PROMPT="$(cat "$SRT")"
 
@@ -60,69 +60,33 @@ info "$SYS_PROMPT"
 info "SRT content: "
 info "$USER_PROMPT"
 info "--------------------------------------------------------------------------------"
-# info "Calling Ollama API via curl at ${OLLAMA_HOST:-http://localhost:11434}/api/chat"
-info "Calling Google Gemini API via curl at ${GOOGLE_GEMINI_HOST:-https://generativelanguage.googleapis.com/v1beta/models}/${GEMINI_MODEL_ID}/generateContent?key=${GEMINI_API_KEY}"
+info "Calling Ollama API via curl at ${OLLAMA_HOST:-http://localhost:11434}/api/chat"
 info "--------------------------------------------------------------------------------"
 
 # Endpoint can be overridden with OLLAMA_HOST (default: http://localhost:11434)
-# OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-GOOGLE_GEMINI_HOST="${GOOGLE_GEMINI_HOST:-https://generativelanguage.googleapis.com/v1beta/models}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 
-# Base64-encode the transcript (USER_PROMPT) because Gemini inlineData expects base64
-# ENCODED_SRT=$(base64 < "$SRT" | tr -d '\n')
-
-# Build JSON payload in Gemini format
+# Build JSON payload safely using jq to avoid quoting issues
 JSON_PAYLOAD=$(jq -n \
-  --arg user_input "$USER_PROMPT" \
-  --arg instructions "$SYS_PROMPT" \
-  '{
-    system_instruction: {
-      parts: [
-        {
-          text: $instructions
-        }
-      ]
-    },
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: $user_input }
-        ]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.1,
-      "thinkingConfig": {
-        "thinkingBudget": -1,
-      },
-      responseMimeType: "text/plain",
-    }
-  }')
-
-# set -x
-# RESP_JSON=$(curl -sS -H "Content-Type: application/json" \
-#   -d "$JSON_PAYLOAD" \
-#   "$OLLAMA_HOST/api/chat")
-# set +x
+  --arg model "$MODEL" \
+  --arg sys "$SYS_PROMPT" \
+  --arg user "$USER_PROMPT" \
+  '{model:$model, stream:false, messages:[{role:"system",content:$sys},{role:"user",content:$user}]}' )
 
 set -x
 RESP_JSON=$(curl -sS -H "Content-Type: application/json" \
   -d "$JSON_PAYLOAD" \
-  "$GOOGLE_GEMINI_HOST/${GEMINI_MODEL_ID}:generateContent?key=${GEMINI_API_KEY}")
-
-# Extract assistant message content (first candidate, concatenate all part texts)
-info "Gemini response:"
-# echo "$RESP_JSON"
-RESP=$(printf '%s\n' "$RESP_JSON" | jq -r '.candidates[0].content.parts[]?.text // empty')
-
+  "$OLLAMA_HOST/api/chat")
 set +x
+
+# Extract assistant message content
+RESP=$(printf '%s\n' "$RESP_JSON" | jq -r '.message.content // empty')
 
 # -----------------------------------------------------------------------------
 # Post-process: strip out <think>...</think> blocks (including newlines)
 # -----------------------------------------------------------------------------
 # Remove any lines between (and including) <think> and </think>
-# RESP=$(printf '%s\n' "$RESP" | sed '/<think>/,/<\/think>/d')
+RESP=$(printf '%s\n' "$RESP" | sed '/<think>/,/<\/think>/d')
 
 # -----------------------------------------------------------------------------
 # Save output
@@ -133,7 +97,6 @@ HASH="$(basename "$DIR")"
 OUT_MD="$SUMMARY_DIR/pre_${HASH}.md"
 
 printf "%s\n" "$RESP" > "$OUT_MD"
-# printf "%s\n" "$RESP_JSON" > "$OUT_MD.json"
 
 touch "$DIR/pre_srt_summary.done"
 info "Pre-SRT summary saved to $OUT_MD"
