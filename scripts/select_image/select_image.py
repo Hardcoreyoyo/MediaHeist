@@ -112,32 +112,37 @@ def parse_transcript_timestamp(timestamp_str: str) -> float:
 
 def group_images_by_segments(images: List[pathlib.Path], segments: List[dict]) -> dict:
     """Group images by transcript segments based on timestamp matching."""
-    grouped = {"ungrouped": []}
-    
     # Initialize groups for each segment
-    for i in range(len(segments)):
-        grouped[f"segment_{i}"] = []
-    
+    grouped = {f"segment_{i}": [] for i in range(len(segments))}
+
+    # Edge case: no segments defined – fall back to single bucket
+    if not segments:
+        grouped["segment_0"] = images.copy()
+        return grouped
+
+    last_seg_key = f"segment_{len(segments)-1}"
+
     for img in images:
         frame_time = parse_frame_timestamp(str(img))
         if frame_time is None:
-            grouped["ungrouped"].append(img)
+            # No timestamp in filename; treat as belonging to last segment
+            grouped[last_seg_key].append(img)
             continue
-        
+
         # Find which segment this frame belongs to
         assigned = False
         for i, segment in enumerate(segments):
             start_time = parse_transcript_timestamp(segment["start"])
             end_time = parse_transcript_timestamp(segment["end"])
-            
             if start_time <= frame_time <= end_time:
                 grouped[f"segment_{i}"].append(img)
                 assigned = True
                 break
-        
+
+        # Frames beyond last segment end are also put into last segment
         if not assigned:
-            grouped["ungrouped"].append(img)
-    
+            grouped[last_seg_key].append(img)
+
     return grouped
 
 # --- Transcript parsing ---------------------------------------------------- #
@@ -367,7 +372,7 @@ def _ensure_templates_exist() -> None:
             #navBtns { padding:4px; border-top:1px solid #ccc; display:flex; gap:8px; justify-content:center; }
             #navBtns button { padding:4px 8px; cursor:pointer; }
             #infoPane { padding: 0.5rem; border-bottom: 1px solid #ccc; flex: 0 0 30%; max-height: 30%; overflow-y: auto; background:#fff; }
-            #fileList { width: 320px; border-right: 1px solid #ccc; overflow-y: auto; padding: 1rem; padding-top: 72px; box-sizing:border-box; }
+            #fileList { width: 16%; border-right: 1px solid #ccc; overflow-y: auto; padding: 1rem; padding-top: 0px; box-sizing:border-box;padding-left: 24px; }
             #fileList ul { list-style: none; margin: 0; padding: 0; }
             #fileList li { cursor: pointer; padding: 4px 2px; user-select: none; }
             #fileList li:hover { background-color: #f0f0f0; }
@@ -384,8 +389,8 @@ def _ensure_templates_exist() -> None:
             .segment-header.active { background-color: #e6f3ff; border-left-color: #0056b3; }
             .segment-images { margin-left: 8px; }
             .segment-images li { padding-left: 8px; border-left: 1px solid #e0e0e0; scroll-margin-top: 80px; }
-            .selected { background-color: #d0e0ff; }
-            .confirmed { background-color: #cccccc; }
+            .selected {\n            background-color: transparent;\n            position: relative;\n            font-weight: bold;\n            }\n            .selected::before {\n                content: \"\\2192\";\n                position: absolute;\n                left: -20px;\n                color: #000;\n                font-weight: bold;\n            }
+            .confirmed {\n            background-color: transparent;\n            position: relative;\n            }\n            .confirmed::after {\n                content: \" \\2022\";\n                color: #000;\n                margin-left: 4px;\n}
             #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; z-index: 1000; }
             #toast.show { opacity:1; }
             #preview { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
@@ -635,6 +640,17 @@ def _ensure_templates_exist() -> None:
             }
             }
 
+            // Move cursor within current segment only
+            function nextInSegment(delta){
+                if(listItems.length===0) return;
+                const currentSeg = String(segIdx);
+                let idx = currentIndex;
+                do{
+                    idx = (idx + delta + listItems.length) % listItems.length;
+                }while(listItems[idx].dataset.segment !== currentSeg && idx !== currentIndex);
+                highlight(idx);
+            }
+
             // initial highlight first item
             if (listItems.length) {
             highlight(0);
@@ -664,10 +680,10 @@ def _ensure_templates_exist() -> None:
             
             if (ev.key === 'ArrowDown') {
                 ev.preventDefault();
-                highlight(currentIndex + 1);
+                nextInSegment(1);
             } else if (ev.key === 'ArrowUp') {
                 ev.preventDefault();
-                highlight(currentIndex - 1);
+                nextInSegment(-1);
             } else if (ev.key === 'ArrowRight') {
                 ev.preventDefault();
                 advanceSegment();
