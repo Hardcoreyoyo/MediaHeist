@@ -77,6 +77,62 @@ def scan_images(directory: pathlib.Path) -> List[pathlib.Path]:
             images.append(path.relative_to(directory))
     return sorted(images)
 
+
+def parse_frame_timestamp(filename: str) -> Optional[float]:
+    """Parse frame filename (frame_xx_xx_xx_xxx) to timestamp in seconds.
+    Returns None if filename doesn't match expected format.
+    """
+    pattern = re.compile(r"frame_(\d{2})_(\d{2})_(\d{2})_(\d{3})")
+    match = pattern.search(filename)
+    if not match:
+        return None
+    
+    hours, minutes, seconds, milliseconds = map(int, match.groups())
+    return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000.0
+
+
+def parse_transcript_timestamp(timestamp_str: str) -> float:
+    """Parse transcript timestamp (hh:mm:ss,mmm) to seconds."""
+    # Handle both comma and dot as millisecond separator
+    timestamp_str = timestamp_str.replace(',', '.')
+    parts = timestamp_str.split(':')
+    hours, minutes = int(parts[0]), int(parts[1])
+    seconds_parts = parts[2].split('.')
+    seconds = int(seconds_parts[0])
+    milliseconds = int(seconds_parts[1]) if len(seconds_parts) > 1 else 0
+    return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000.0
+
+
+def group_images_by_segments(images: List[pathlib.Path], segments: List[dict]) -> dict:
+    """Group images by transcript segments based on timestamp matching."""
+    grouped = {"ungrouped": []}
+    
+    # Initialize groups for each segment
+    for i in range(len(segments)):
+        grouped[f"segment_{i}"] = []
+    
+    for img in images:
+        frame_time = parse_frame_timestamp(str(img))
+        if frame_time is None:
+            grouped["ungrouped"].append(img)
+            continue
+        
+        # Find which segment this frame belongs to
+        assigned = False
+        for i, segment in enumerate(segments):
+            start_time = parse_transcript_timestamp(segment["start"])
+            end_time = parse_transcript_timestamp(segment["end"])
+            
+            if start_time <= frame_time <= end_time:
+                grouped[f"segment_{i}"].append(img)
+                assigned = True
+                break
+        
+        if not assigned:
+            grouped["ungrouped"].append(img)
+    
+    return grouped
+
 # --- Transcript parsing ---------------------------------------------------- #
 
 def parse_transcript(path: pathlib.Path) -> List[dict]:
@@ -156,11 +212,18 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):  # type: ignore[valid-type]
+        # Group images by segments if transcript is available
+        grouped_images = {}
+        if segments_cache:
+            grouped_images = group_images_by_segments(image_cache, segments_cache)
+        
         return templates.TemplateResponse(
             "gallery.html",
             {
                 "request": request,
                 "images": image_cache,
+                "grouped_images": grouped_images,
+                "segments": segments_cache,
             },
         )
 
@@ -217,6 +280,19 @@ def _ensure_templates_exist() -> None:
             #fileList ul { list-style: none; margin: 0; padding: 0; }
             #fileList li { cursor: pointer; padding: 4px 2px; user-select: none; }
             #fileList li:hover { background-color: #f0f0f0; }
+            .segment-group { margin-bottom: 1rem; }
+            .segment-header { 
+                font-weight: bold; 
+                color: #333; 
+                background-color: #f5f5f5; 
+                padding: 6px 8px; 
+                margin: 4px 0; 
+                border-left: 3px solid #007acc;
+                font-size: 0.9em;
+            }
+            .segment-header.active { background-color: #e6f3ff; border-left-color: #0056b3; }
+            .segment-images { margin-left: 8px; }
+            .segment-images li { padding-left: 8px; border-left: 1px solid #e0e0e0; }
             .selected { background-color: #d0e0ff; }
             .confirmed { background-color: #cccccc; }
             #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; }
@@ -235,11 +311,47 @@ def _ensure_templates_exist() -> None:
             <h2 style=\"margin:0; padding:1rem;\">Select an image</h2>
             <div class=\"container\">
             <div id=\"fileList\">
-                <ul>
-                {% for img in images %}
-                <li data-file=\"{{ img }}\">{{ img }}</li>
-                {% endfor %}
-                </ul>
+                {% if grouped_images and segments %}
+                    <!-- Grouped by segments -->
+                    {% for i in range(segments|length) %}
+                        {% set segment = segments[i] %}
+                        {% set segment_images = grouped_images.get('segment_' + i|string, []) %}
+                        {% if segment_images %}
+                        <div class="segment-group">
+                            <div class="segment-header" data-segment="{{ i }}">
+                                {{ segment.start }} ~ {{ segment.end }}
+                                <br><span style="font-weight: normal; font-size: 0.85em; color: #666;">
+                                {{ segment.text[:50] }}{% if segment.text|length > 50 %}...{% endif %}
+                                </span>
+                            </div>
+                            <ul class="segment-images">
+                                {% for img in segment_images %}
+                                <li data-file="{{ img }}" data-segment="{{ i }}">{{ img }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    <!-- Ungrouped images -->
+                    {% if grouped_images.get('ungrouped', []) %}
+                    <div class="segment-group">
+                        <div class="segment-header">其他圖片</div>
+                        <ul class="segment-images">
+                            {% for img in grouped_images.ungrouped %}
+                            <li data-file="{{ img }}" data-segment="-1">{{ img }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <!-- Fallback: show all images without grouping -->
+                    <ul>
+                    {% for img in images %}
+                    <li data-file="{{ img }}" data-segment="-1">{{ img }}</li>
+                    {% endfor %}
+                    </ul>
+                {% endif %}
             </div>
                 <div id=\"rightPane\">
                     <div id=\"infoPane\"></div>
@@ -272,7 +384,8 @@ def _ensure_templates_exist() -> None:
             
             <script>
             // --- enhanced navigation and selection ---
-            const listItems = Array.from(document.querySelectorAll('#fileList li'));
+            const listItems = Array.from(document.querySelectorAll('#fileList li[data-file]'));
+            const segmentHeaders = Array.from(document.querySelectorAll('.segment-header[data-segment]'));
 
             // toast helper
             function showToast(msg){
@@ -283,8 +396,10 @@ def _ensure_templates_exist() -> None:
             }
 
             function confirmFile(file, li){
-            const selArr = (selections[segIdx] ??= []);
-            const wrap = segDivs[segIdx]?.querySelector('.seg-images');
+            const segmentIdx = li ? parseInt(li.dataset.segment) : segIdx;
+            const actualSegIdx = segmentIdx >= 0 ? segmentIdx : segIdx;
+            const selArr = (selections[actualSegIdx] ??= []);
+            const wrap = segDivs[actualSegIdx]?.querySelector('.seg-images');
             const idx = selArr.indexOf(file);
             if(idx === -1){
                 // add
@@ -314,11 +429,19 @@ def _ensure_templates_exist() -> None:
             function highlight(idx) {
             if (listItems.length === 0) return;
             listItems.forEach(li => li.classList.remove('selected'));
+            segmentHeaders.forEach(h => h.classList.remove('active'));
             currentIndex = (idx + listItems.length) % listItems.length;
             const li = listItems[currentIndex];
             li.classList.add('selected');
             li.scrollIntoView({behavior:'auto',block:'nearest'});
             showPreview(li.dataset.file);
+            
+            // Highlight corresponding segment header
+            const segmentIdx = parseInt(li.dataset.segment);
+            if (segmentIdx >= 0) {
+                const header = segmentHeaders.find(h => parseInt(h.dataset.segment) === segmentIdx);
+                if (header) header.classList.add('active');
+            }
             }
 
             // initial highlight first item
