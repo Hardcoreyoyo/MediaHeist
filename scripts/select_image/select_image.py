@@ -366,40 +366,43 @@ def _ensure_templates_exist() -> None:
         <title>Image Selector</title>
 
         <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+            body { font-family: "Source Code Pro", "Courier New", monospace; margin:0; padding:0; background:#000; color:#eee; }
+            a{color:#0af;}
             .container { display: flex; margin-top: 72px; height: calc(100vh - 72px); }
             #rightPane { flex: 1; display: flex; flex-direction: column; }
-            #navBtns { padding:4px; border-top:1px solid #ccc; display:flex; gap:8px; justify-content:center; }
+            #navBtns { padding:4px; border-top:1px solid #333; display:flex; gap:8px; justify-content:center; }
             #navBtns button { padding:4px 8px; cursor:pointer; }
-            #infoPane { padding: 0.5rem; border-bottom: 1px solid #ccc; flex: 0 0 30%; max-height: 30%; overflow-y: auto; background:#fff; }
-            #fileList { width: 16%; border-right: 1px solid #ccc; overflow-y: auto; padding: 1rem; padding-top: 0px; box-sizing:border-box;padding-left: 24px; }
+            #infoPane { padding: 0.5rem; border-bottom: 1px solid #333; flex: 0 0 30%; max-height: 30%; overflow-y: auto; background:#000; }
+            #fileList { width: 16%; border-right: 1px solid #333; overflow-y: auto; padding: 1rem; padding-top: 0px; box-sizing:border-box;padding-left: 24px; }
             #fileList ul { list-style: none; margin: 0; padding: 0; }
             #fileList li { cursor: pointer; padding: 4px 2px; user-select: none; }
-            #fileList li:hover { background-color: #f0f0f0; }
+            
             .segment-group { margin-bottom: 1rem; }
             .segment-header { 
                 font-weight: bold; 
-                color: #333; 
-                background-color: #f5f5f5; 
+                color: #eee; 
+                background-color: #111; 
                 padding: 6px 8px; 
                 margin: 4px 0; 
                 border-left: 3px solid #007acc;
                 font-size: 0.9em;
             }
-            .segment-header.active { background-color: #e6f3ff; border-left-color: #0056b3; }
+            .segment-header.active { background-color: #222; border-left-color: #0f0; }
             .segment-images { margin-left: 8px; }
             .segment-images li { padding-left: 8px; border-left: 1px solid #e0e0e0; scroll-margin-top: 80px; }
-            .selected {\n            background-color: transparent;\n            position: relative;\n            font-weight: bold;\n            }\n            .selected::before {\n                content: \"\\2192\";\n                position: absolute;\n                left: -20px;\n                color: #000;\n                font-weight: bold;\n            }
-            .confirmed {\n            background-color: transparent;\n            position: relative;\n            }\n            .confirmed::after {\n                content: \" \\2022\";\n                color: #000;\n                margin-left: 4px;\n}
+            .selected {\n            background-color: transparent;\n            position: relative;\n            font-weight: bold;\n            }\n            .selected::before {
+                color: #0f0;  /* bright green arrow */\n                content: \"\\2192\";\n                position: absolute;\n                left: -20px;\n\n                font-weight: bold;\n            }
+            .confirmed {\n            background-color: transparent;\n            position: relative;\n            }\n            .confirmed::after {
+                color: #0af;  /* bright cyan bullet */\n                content: \" \\2022\";\n\n                margin-left: 4px;\n}
             #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; z-index: 1000; }
             #toast.show { opacity:1; }
             #preview { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
             #preview img { height: auto; width: auto; max-width: 100%; max-height: 100%; }
-            .segment { margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #e0e0e0; }
-            .seg-title { font-weight: bold; color: #333; margin-bottom: 0.25rem; }
+            .segment { margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #e0e0e0; padding-left: 8px;}
+            .seg-title { font-weight: bold; color: #eee; margin-bottom: 0.25rem; }
             .seg-images { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
             .seg-images img { max-width:100px; height:auto; border:1px solid #ccc; }
-            .current-seg { background-color:#fffbe6; }
+            .current-seg { background-color:#222; border-left:3px solid #0f0; }
             
             /* Modal styles */
             .modal-overlay {
@@ -418,7 +421,7 @@ def _ensure_templates_exist() -> None:
                 display: flex;
             }
             .modal-content {
-                background: white;
+                background: #000; color:#eee; border:1px solid #333;
                 border-radius: 8px;
                 padding: 2rem;
                 max-width: 500px;
@@ -429,20 +432,21 @@ def _ensure_templates_exist() -> None:
                 font-size: 1.2em;
                 font-weight: bold;
                 margin-bottom: 1rem;
-                color: #333;
+                color: #eee;
             }
             .modal-body {
                 margin-bottom: 1.5rem;
                 line-height: 1.5;
-                color: #666;
+                color: #ccc;
             }
             .modal-stats {
-                background: #f5f5f5;
+                background: #111; color:#eee; border:1px solid #333;
                 padding: 1rem;
                 border-radius: 4px;
                 margin: 1rem 0;
                 font-family: monospace;
                 font-size: 0.9em;
+                white-space: pre-wrap;
             }
             .modal-buttons {
                 display: flex;
@@ -458,18 +462,16 @@ def _ensure_templates_exist() -> None:
                 transition: background-color 0.2s;
             }
             .modal-btn-cancel {
-                background: #e0e0e0;
-                color: #333;
+                background: #222; color:#eee; border:1px solid #333;
             }
             .modal-btn-cancel:hover {
-                background: #d0d0d0;
+                background: #444;
             }
             .modal-btn-confirm {
-                background: #007acc;
-                color: white;
+                background: #0f0; color:#000; font-weight:bold;
             }
             .modal-btn-confirm:hover {
-                background: #0056b3;
+                background: #0c0;
             }
             .modal-btn:disabled {
                 opacity: 0.6;
@@ -479,7 +481,7 @@ def _ensure_templates_exist() -> None:
         </head>
 
         <body>
-            <h2 style=\"position:sticky; top:0; z-index:1500; background:#fff; margin:0; padding:1rem; border-bottom:1px solid #ccc;\">Select an image <span style=\"font-size:0.7em; color:#666;\">(Cmd+Enter 匯出)</span></h2>
+            <h2 style=\"position:sticky; top:0; z-index:1500; background:#000; color:#eee; margin:0; padding:1rem; border-bottom:1px solid #333;\">Select an image <span style=\"font-size:0.7em; color:#888;\">(Cmd+Enter 匯出)</span></h2>
             <div class=\"container\">
             <div id=\"fileList\">
                 {% if grouped_images and segments %}
@@ -536,7 +538,7 @@ def _ensure_templates_exist() -> None:
             <!-- Export Confirmation Modal -->
             <div id="exportModal" class="modal-overlay">
                 <div class="modal-content">
-                    <div class="modal-header">確認匯出內容</div>
+                    <div class="modal-header">準備匯出</div>
                     <div class="modal-body">
                         確定要匯出所有已選擇的圖片和文字內容嗎？
                         <div id="exportStats" class="modal-stats"></div>
@@ -671,6 +673,11 @@ def _ensure_templates_exist() -> None:
             if(prevBtnEl) prevBtnEl.addEventListener('click', prevSegment);
 
             window.addEventListener('keydown', (ev) => {
+            // Ignore global shortcuts while export modal is open
+            const exportModal = document.getElementById('exportModal');
+            if (exportModal && exportModal.classList.contains('show')) {
+                return; // let modal handler manage keys
+            }
             // Check for Cmd+Enter (Mac) or Ctrl+Enter (Windows/Linux)
             if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
                 ev.preventDefault();
@@ -690,7 +697,7 @@ def _ensure_templates_exist() -> None:
             } else if (ev.key === 'ArrowLeft') {
                 ev.preventDefault();
                 prevSegment();
-            } else if (ev.key === 'Enter') {
+            } else if (ev.key === 'Enter' || ev.code === 'Space') {
                 ev.preventDefault();
                 if (listItems.length) {
                 confirmFile(listItems[currentIndex].dataset.file, listItems[currentIndex]);
@@ -780,6 +787,19 @@ def _ensure_templates_exist() -> None:
             // ------- end segments -------
 
             // ------- Export Modal Functions -------
+            function modalKeyHandler(e) {
+                const modal = document.getElementById('exportModal');
+                if (!modal.classList.contains('show')) return;
+                e.stopPropagation();
+                if (e.key === 'Enter' || e.code === 'Space') {
+                    e.preventDefault();
+                    confirmExport();
+                } else if (e.key === 'n' || e.key === 'N') {
+                    e.preventDefault();
+                    hideExportModal();
+                }
+            }
+
             function showExportModal() {
                 const modal = document.getElementById('exportModal');
                 const statsEl = document.getElementById('exportStats');
@@ -799,9 +819,9 @@ def _ensure_templates_exist() -> None:
                             const segmentIdx = parseInt(key);
                             const segment = segments[segmentIdx];
                             if (segment) {
-                                statsText += `時間段 ${segment.start}~${segment.end}: ${files.length} 張\n`;
+                                statsText += `\n\n時間段 ${segment.start}~${segment.end}: ${files.length} 張\n\n\n`;
                             } else {
-                                statsText += `段落 ${key}: ${files.length} 張\n`;
+                                statsText += `\n\n段落 ${key}: ${files.length} 張\n\n\n`;
                             }
                         }
                     }
@@ -816,12 +836,23 @@ def _ensure_templates_exist() -> None:
                 }
                 
                 statsEl.textContent = statsText;
+                // Ensure element can receive keyboard focus for arrow scrolling
+                statsEl.setAttribute('tabindex', '-1');
+                statsEl.focus();
+                // Prevent background page from scrolling while modal open
+                document.body.style.overflow = 'hidden';
                 modal.classList.add('show');
+                // Attach modal-specific key handler with high priority (capture phase)
+                document.addEventListener('keydown', modalKeyHandler, true);
             }
             
             function hideExportModal() {
                 const modal = document.getElementById('exportModal');
                 modal.classList.remove('show');
+                // Restore page scroll
+                document.body.style.overflow = '';
+                // Detach modal-specific key handler
+                document.removeEventListener('keydown', modalKeyHandler, true);
             }
             
             async function confirmExport() {
