@@ -26,7 +26,8 @@ Run:
     # Activate env and start server, default host=127.0.0.1:8000
     pipenv run python scripts/select_image.py \
         --base-dir /path/to/your/images \
-        --refresh-secs 15
+        --refresh-secs 15 \
+        --output-dir /path/to/output
 """
 
 from __future__ import annotations
@@ -37,7 +38,8 @@ import os
 import pathlib
 import re
 import sys
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -58,10 +60,15 @@ class Settings(BaseModel):
     refresh_secs: int = Field(15, ge=5, description="Directory rescan interval")
     port: int = Field(8000, ge=1, le=65535, description="HTTP port")
     transcript_path: Optional[pathlib.Path] = Field(None, description="Transcript text file")
+    output_dir: Optional[pathlib.Path] = Field(None, description="Directory to save exported markdown")
 
 
 class SelectionPayload(BaseModel):
     filename: str
+
+
+class ExportPayload(BaseModel):
+    selections: Dict[str, List[str]]  # segment_id -> list of filenames
 
 
 # ------------------------------- Utilities --------------------------------- #
@@ -157,6 +164,49 @@ def parse_transcript(path: pathlib.Path) -> List[dict]:
     return segments
 
 
+def generate_markdown(segments: List[dict], selections: Dict[str, List[str]], base_dir: pathlib.Path) -> str:
+    """Generate markdown content from segments and selected images."""
+    markdown_lines = []
+    markdown_lines.append("# 影片內容整理")
+    markdown_lines.append(f"\n生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    markdown_lines.append("")
+    
+    for i, segment in enumerate(segments):
+        segment_key = str(i)
+        selected_images = selections.get(segment_key, [])
+        
+        # Add segment header
+        markdown_lines.append(f"## 時間段: {segment['start']} ~ {segment['end']}")
+        markdown_lines.append("")
+        
+        # Add segment text
+        markdown_lines.append(segment['text'])
+        markdown_lines.append("")
+        
+        # Add selected images
+        if selected_images:
+            markdown_lines.append("### 相關圖片")
+            markdown_lines.append("")
+            for img_path in selected_images:
+                # Use relative path for markdown
+                markdown_lines.append(f"![{img_path}]({img_path})")
+            markdown_lines.append("")
+        
+        markdown_lines.append("---")
+        markdown_lines.append("")
+    
+    # Handle ungrouped selections
+    ungrouped = selections.get("ungrouped", [])
+    if ungrouped:
+        markdown_lines.append("## 其他圖片")
+        markdown_lines.append("")
+        for img_path in ungrouped:
+            markdown_lines.append(f"![{img_path}]({img_path})")
+        markdown_lines.append("")
+    
+    return "\n".join(markdown_lines)
+
+
 # ------------------------------- App setup --------------------------------- #
 
 def create_app(settings: Settings) -> FastAPI:
@@ -168,6 +218,10 @@ def create_app(settings: Settings) -> FastAPI:
     if not settings.base_dir.is_dir():
         LOGGER.error("Base directory does not exist: %s", settings.base_dir)
         sys.exit(1)
+
+    # Ensure output dir exists
+    if settings.output_dir:
+        settings.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Mount static file handler
     app.mount(
@@ -244,6 +298,43 @@ def create_app(settings: Settings) -> FastAPI:
     async def segments():
         return segments_cache
 
+    @app.post("/export", response_class=JSONResponse)
+    async def export_markdown(payload: ExportPayload):
+        if not settings.output_dir:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="Export functionality not available: output directory not configured"
+            )
+            
+        try:
+            # Generate markdown content
+            markdown_content = generate_markdown(segments_cache, payload.selections, settings.base_dir)
+            
+            # Create filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"exported_content_{timestamp}.md"
+            output_path = settings.output_dir / filename
+            
+            # Write markdown file
+            output_path.write_text(markdown_content, encoding="utf-8")
+            
+            LOGGER.info("Exported markdown to: %s", output_path)
+            
+            return {
+                "ok": True, 
+                "filename": filename,
+                "path": str(output_path),
+                "total_segments": len(segments_cache),
+                "total_selections": sum(len(imgs) for imgs in payload.selections.values())
+            }
+            
+        except Exception as exc:
+            LOGGER.exception("Export failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail=f"Export failed: {str(exc)}"
+            )
+
     return app
 
 
@@ -271,12 +362,12 @@ def _ensure_templates_exist() -> None:
 
         <style>
             body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
-            .container { display: flex; height: 100vh; }
+            .container { display: flex; margin-top: 72px; height: calc(100vh - 72px); }
             #rightPane { flex: 1; display: flex; flex-direction: column; }
             #navBtns { padding:4px; border-top:1px solid #ccc; display:flex; gap:8px; justify-content:center; }
             #navBtns button { padding:4px 8px; cursor:pointer; }
-            #infoPane { padding: 0.5rem; border-bottom: 1px solid #ccc; flex: 0 0 30%; max-height: 30%; overflow-y: auto; }
-            #fileList { width: 320px; border-right: 1px solid #ccc; overflow-y: auto; padding: 1rem; }
+            #infoPane { padding: 0.5rem; border-bottom: 1px solid #ccc; flex: 0 0 30%; max-height: 30%; overflow-y: auto; background:#fff; }
+            #fileList { width: 320px; border-right: 1px solid #ccc; overflow-y: auto; padding: 1rem; padding-top: 72px; box-sizing:border-box; }
             #fileList ul { list-style: none; margin: 0; padding: 0; }
             #fileList li { cursor: pointer; padding: 4px 2px; user-select: none; }
             #fileList li:hover { background-color: #f0f0f0; }
@@ -292,10 +383,10 @@ def _ensure_templates_exist() -> None:
             }
             .segment-header.active { background-color: #e6f3ff; border-left-color: #0056b3; }
             .segment-images { margin-left: 8px; }
-            .segment-images li { padding-left: 8px; border-left: 1px solid #e0e0e0; }
+            .segment-images li { padding-left: 8px; border-left: 1px solid #e0e0e0; scroll-margin-top: 80px; }
             .selected { background-color: #d0e0ff; }
             .confirmed { background-color: #cccccc; }
-            #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; }
+            #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; z-index: 1000; }
             #toast.show { opacity:1; }
             #preview { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
             #preview img { height: auto; width: auto; max-width: 100%; max-height: 100%; }
@@ -304,11 +395,86 @@ def _ensure_templates_exist() -> None:
             .seg-images { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
             .seg-images img { max-width:100px; height:auto; border:1px solid #ccc; }
             .current-seg { background-color:#fffbe6; }
+            
+            /* Modal styles */
+            .modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                display: none;
+                justify-content: center;
+                align-items: center;
+                z-index: 2000;
+            }
+            .modal-overlay.show {
+                display: flex;
+            }
+            .modal-content {
+                background: white;
+                border-radius: 8px;
+                padding: 2rem;
+                max-width: 500px;
+                width: 90%;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            }
+            .modal-header {
+                font-size: 1.2em;
+                font-weight: bold;
+                margin-bottom: 1rem;
+                color: #333;
+            }
+            .modal-body {
+                margin-bottom: 1.5rem;
+                line-height: 1.5;
+                color: #666;
+            }
+            .modal-stats {
+                background: #f5f5f5;
+                padding: 1rem;
+                border-radius: 4px;
+                margin: 1rem 0;
+                font-family: monospace;
+                font-size: 0.9em;
+            }
+            .modal-buttons {
+                display: flex;
+                gap: 1rem;
+                justify-content: flex-end;
+            }
+            .modal-btn {
+                padding: 0.5rem 1.5rem;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 1em;
+                transition: background-color 0.2s;
+            }
+            .modal-btn-cancel {
+                background: #e0e0e0;
+                color: #333;
+            }
+            .modal-btn-cancel:hover {
+                background: #d0d0d0;
+            }
+            .modal-btn-confirm {
+                background: #007acc;
+                color: white;
+            }
+            .modal-btn-confirm:hover {
+                background: #0056b3;
+            }
+            .modal-btn:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
         </style>
         </head>
 
         <body>
-            <h2 style=\"margin:0; padding:1rem;\">Select an image</h2>
+            <h2 style=\"position:sticky; top:0; z-index:1500; background:#fff; margin:0; padding:1rem; border-bottom:1px solid #ccc;\">Select an image <span style=\"font-size:0.7em; color:#666;\">(Cmd+Enter 匯出)</span></h2>
             <div class=\"container\">
             <div id=\"fileList\">
                 {% if grouped_images and segments %}
@@ -339,7 +505,7 @@ def _ensure_templates_exist() -> None:
                         <div class="segment-header">其他圖片</div>
                         <ul class="segment-images">
                             {% for img in grouped_images.ungrouped %}
-                            <li data-file="{{ img }}" data-segment="-1">{{ img }}</li>
+                            <li data-file="{{ img }}" data-segment="ungrouped">{{ img }}</li>
                             {% endfor %}
                         </ul>
                     </div>
@@ -348,7 +514,7 @@ def _ensure_templates_exist() -> None:
                     <!-- Fallback: show all images without grouping -->
                     <ul>
                     {% for img in images %}
-                    <li data-file="{{ img }}" data-segment="-1">{{ img }}</li>
+                    <li data-file="{{ img }}" data-segment="ungrouped">{{ img }}</li>
                     {% endfor %}
                     </ul>
                 {% endif %}
@@ -361,6 +527,21 @@ def _ensure_templates_exist() -> None:
                 </div>
             </div>
             <div id=\"toast\" ></div>
+
+            <!-- Export Confirmation Modal -->
+            <div id="exportModal" class="modal-overlay">
+                <div class="modal-content">
+                    <div class="modal-header">確認匯出內容</div>
+                    <div class="modal-body">
+                        確定要匯出所有已選擇的圖片和文字內容嗎？
+                        <div id="exportStats" class="modal-stats"></div>
+                    </div>
+                    <div class="modal-buttons">
+                        <button class="modal-btn modal-btn-cancel" onclick="hideExportModal()">取消</button>
+                        <button class="modal-btn modal-btn-confirm" onclick="confirmExport()" id="confirmExportBtn">確認匯出</button>
+                    </div>
+                </div>
+            </div>
 
             <script>
             async function postSelection(file) {
@@ -396,10 +577,11 @@ def _ensure_templates_exist() -> None:
             }
 
             function confirmFile(file, li){
-            const segmentIdx = li ? parseInt(li.dataset.segment) : segIdx;
-            const actualSegIdx = segmentIdx >= 0 ? segmentIdx : segIdx;
-            const selArr = (selections[actualSegIdx] ??= []);
-            const wrap = segDivs[actualSegIdx]?.querySelector('.seg-images');
+            const segmentIdx = li ? li.dataset.segment : String(segIdx);
+            const actualSegIdx = segmentIdx !== 'ungrouped' ? parseInt(segmentIdx) : segIdx;
+            const selectionKey = segmentIdx === 'ungrouped' ? 'ungrouped' : String(actualSegIdx >= 0 ? actualSegIdx : segIdx);
+            const selArr = (selections[selectionKey] ??= []);
+            const wrap = segDivs[actualSegIdx >= 0 ? actualSegIdx : 0]?.querySelector('.seg-images');
             const idx = selArr.indexOf(file);
             if(idx === -1){
                 // add
@@ -407,21 +589,30 @@ def _ensure_templates_exist() -> None:
                 selArr.push(file);
                 if(li) li.classList.add('confirmed');
                 showToast('已添加內容');
-                if(wrap){
+                if(wrap && segmentIdx !== 'ungrouped'){
                     const thumb = document.createElement('img');
                     thumb.src = '/static/' + file;
                     thumb.dataset.file = file;
                     wrap.appendChild(thumb);
+                    // after adding, align segment bottom to pane bottom
+                    const pane = document.getElementById('infoPane');
+                    const seg = segDivs[segIdx];
+                    if(seg){
+                        const bottom = seg.getBoundingClientRect().bottom - pane.getBoundingClientRect().top + pane.scrollTop;
+                        const target = bottom - pane.clientHeight;
+                        pane.scrollTo({top: target, behavior:'auto'});
+                    }
                 }
             }else{
                 // remove
                 selArr.splice(idx,1);
                 if(li) li.classList.remove('confirmed');
                 showToast('已移除');
-                if(wrap){
+                if(wrap && segmentIdx !== 'ungrouped'){
                     const img = wrap.querySelector(`img[data-file="${file}"]`);
                     if(img) img.remove();
                 }
+
             }
             }
 
@@ -437,9 +628,9 @@ def _ensure_templates_exist() -> None:
             showPreview(li.dataset.file);
             
             // Highlight corresponding segment header
-            const segmentIdx = parseInt(li.dataset.segment);
-            if (segmentIdx >= 0) {
-                const header = segmentHeaders.find(h => parseInt(h.dataset.segment) === segmentIdx);
+            const segmentIdx = li.dataset.segment;
+            if (segmentIdx !== 'ungrouped' && segmentIdx !== '-1') {
+                const header = segmentHeaders.find(h => h.dataset.segment === segmentIdx);
                 if (header) header.classList.add('active');
             }
             }
@@ -464,6 +655,13 @@ def _ensure_templates_exist() -> None:
             if(prevBtnEl) prevBtnEl.addEventListener('click', prevSegment);
 
             window.addEventListener('keydown', (ev) => {
+            // Check for Cmd+Enter (Mac) or Ctrl+Enter (Windows/Linux)
+            if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+                ev.preventDefault();
+                showExportModal();
+                return;
+            }
+            
             if (ev.key === 'ArrowDown') {
                 ev.preventDefault();
                 highlight(currentIndex + 1);
@@ -501,13 +699,25 @@ def _ensure_templates_exist() -> None:
                 segDivs.forEach(d=>d.classList.remove('current-seg'));
                 if(idx>=0 && idx<segDivs.length){
                     segDivs[idx].classList.add('current-seg');
-                    segDivs[idx].scrollIntoView({behavior:'smooth',block:'nearest'});
+                    const pane = document.getElementById('infoPane');
+                    const target = segDivs[idx].getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
+                    pane.scrollTo({top: target, behavior:'smooth'});
+                }
+
+                // automatically highlight the first image belonging to this segment
+                const firstLi = listItems.find(li => li.dataset.segment === String(idx));
+                if(firstLi){
+                    highlight(listItems.indexOf(firstLi));\n                    // scroll list so the first item is at top of view\n                    firstLi.scrollIntoView({behavior:'smooth', block:'start'});
                 }
                 // refresh confirmed state on file list
                 listItems.forEach(li=>li.classList.remove('confirmed'));
-                const selectedFiles = selections[idx] ?? [];
+                const selectedFiles = selections[String(idx)] ?? [];
+                const ungroupedFiles = selections['ungrouped'] ?? [];
                 listItems.forEach(li=>{
-                    if(selectedFiles.includes(li.dataset.file)){
+                    const segmentIdx = li.dataset.segment;
+                    if(segmentIdx === 'ungrouped' && ungroupedFiles.includes(li.dataset.file)){
+                        li.classList.add('confirmed');
+                    } else if(segmentIdx === String(idx) && selectedFiles.includes(li.dataset.file)){
                         li.classList.add('confirmed');
                     }
                 });
@@ -552,6 +762,105 @@ def _ensure_templates_exist() -> None:
             }
             loadSegments();
             // ------- end segments -------
+
+            // ------- Export Modal Functions -------
+            function showExportModal() {
+                const modal = document.getElementById('exportModal');
+                const statsEl = document.getElementById('exportStats');
+                
+                // Calculate statistics
+                let totalSelections = 0;
+                let segmentCount = 0;
+                let statsText = '';
+                
+                for (const [key, files] of Object.entries(selections)) {
+                    if (files && files.length > 0) {
+                        totalSelections += files.length;
+                        if (key === 'ungrouped') {
+                            statsText += `其他圖片: ${files.length} 張\n`;
+                        } else {
+                            segmentCount++;
+                            const segmentIdx = parseInt(key);
+                            const segment = segments[segmentIdx];
+                            if (segment) {
+                                statsText += `時間段 ${segment.start}~${segment.end}: ${files.length} 張\n`;
+                            } else {
+                                statsText += `段落 ${key}: ${files.length} 張\n`;
+                            }
+                        }
+                    }
+                }
+                
+                if (totalSelections === 0) {
+                    statsText = '尚未選擇任何圖片';
+                    document.getElementById('confirmExportBtn').disabled = true;
+                } else {
+                    statsText += `\n總計: ${totalSelections} 張圖片, ${segmentCount} 個時間段`;
+                    document.getElementById('confirmExportBtn').disabled = false;
+                }
+                
+                statsEl.textContent = statsText;
+                modal.classList.add('show');
+            }
+            
+            function hideExportModal() {
+                const modal = document.getElementById('exportModal');
+                modal.classList.remove('show');
+            }
+            
+            async function confirmExport() {
+                const confirmBtn = document.getElementById('confirmExportBtn');
+                const originalText = confirmBtn.textContent;
+                
+                try {
+                    confirmBtn.disabled = true;
+                    confirmBtn.textContent = '匯出中...';
+                    
+                    const response = await fetch('/export', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            selections: selections
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        hideExportModal();
+                        showToast(`匯出成功！檔案已儲存: ${result.filename}`);
+                        console.log('Export result:', result);
+                    } else {
+                        throw new Error(result.detail || '匯出失敗');
+                    }
+                    
+                } catch (error) {
+                    console.error('Export error:', error);
+                    showToast(`匯出失敗: ${error.message}`);
+                } finally {
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = originalText;
+                }
+            }
+            
+            // Close modal when clicking outside
+            document.getElementById('exportModal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    hideExportModal();
+                }
+            });
+            
+            // Close modal with Escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    const modal = document.getElementById('exportModal');
+                    if (modal.classList.contains('show')) {
+                        hideExportModal();
+                    }
+                }
+            });
             </script>
 
         </body> 
@@ -567,14 +876,19 @@ def _parse_args(argv: List[str] | None = None) -> Settings:
     parser.add_argument("--refresh-secs", type=int, default=15, help="Rescan interval in seconds")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on")
     parser.add_argument("--transcript", help="Transcript text file (optional)")
+    parser.add_argument("--output-dir", help="Directory to save exported markdown files (default: ./output)")
     ns = parser.parse_args(argv)
+    
+    # Set default output directory if not provided
+    output_dir = ns.output_dir if ns.output_dir else "./output"
+    
     return Settings(
         base_dir=pathlib.Path(ns.base_dir).expanduser().resolve(),
         refresh_secs=ns.refresh_secs,
         port=ns.port,
         transcript_path=pathlib.Path(ns.transcript).expanduser().resolve() if ns.transcript else None,
+        output_dir=pathlib.Path(output_dir).expanduser().resolve(),
     )
-
 
 def main() -> None:  # pragma: no cover
     _ensure_templates_exist()
