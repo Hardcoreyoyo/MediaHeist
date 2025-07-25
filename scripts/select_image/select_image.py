@@ -352,39 +352,98 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.post("/export", response_class=JSONResponse)
     async def export_markdown(payload: ExportPayload):
+        """Export selected images and markdown.
+
+        1. Copy all *unique* selected images into a sub-directory of the
+           configured ``output_dir``.  The directory name follows the pattern
+           ``image_YYYYMMDD_HHMMSS`` so that it is guaranteed to be unique per
+           export action.
+        2. Generate markdown that references the copied images using the new
+           relative path (``<images_dir_name>/<orig_relative_path>``).
+        3. Write the markdown file next to the image directory.
+        """
+
         if not settings.output_dir:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Export functionality not available: output directory not configured"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Export functionality not available: output directory not configured",
             )
-            
+
         try:
-            # Generate markdown content
-            markdown_content = generate_markdown(segments_cache, payload.selections, settings.base_dir)
-            
-            # Create filename with timestamp
+            import shutil
+
+            # ------------------------------------------------------------------
+            # 1. Prepare timestamp-based names
+            # ------------------------------------------------------------------
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"exported_content_{timestamp}.md"
-            output_path = settings.output_dir / filename
-            
-            # Write markdown file
+            images_dir_name = f"image_{timestamp}"
+            images_dir_path = settings.output_dir / images_dir_name
+            images_dir_path.mkdir(parents=True, exist_ok=True)
+
+            # ------------------------------------------------------------------
+            # 2. Copy selected images & build transformed selections for markdown
+            # ------------------------------------------------------------------
+            transformed_selections: Dict[str, List[str]] = {}
+            copied_files: set[str] = set()
+
+            for seg_key, img_list in payload.selections.items():
+                new_img_list: List[str] = []
+                for rel_img_path in img_list:
+                    src_path = (settings.base_dir / rel_img_path).resolve()
+                    if not src_path.is_file():
+                        LOGGER.warning("Source image does not exist: %s", src_path)
+                        continue
+
+                    # Destination keeps original relative structure to avoid name clashes
+                    dest_path = images_dir_path / rel_img_path
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Copy only once even if the same image appears multiple times
+                    dest_key = str(dest_path.resolve())
+                    if dest_key not in copied_files:
+                        shutil.copy2(src_path, dest_path)
+                        copied_files.add(dest_key)
+
+                    # Markdown should reference path relative to markdown file
+                    new_rel_path = f"{images_dir_name}/{rel_img_path}"
+                    new_img_list.append(new_rel_path)
+                transformed_selections[seg_key] = new_img_list
+
+            # ------------------------------------------------------------------
+            # 3. Generate markdown content with updated image paths
+            # ------------------------------------------------------------------
+            markdown_content = generate_markdown(
+                segments_cache,
+                transformed_selections,
+                settings.base_dir,  # parameter not used inside the function currently
+            )
+
+            # ------------------------------------------------------------------
+            # 4. Write markdown file
+            # ------------------------------------------------------------------
+            md_filename = f"exported_content_{timestamp}.md"
+            output_path = settings.output_dir / md_filename
             output_path.write_text(markdown_content, encoding="utf-8")
-            
-            LOGGER.info("Exported markdown to: %s", output_path)
-            
+
+            LOGGER.info(
+                "Export succeeded: markdown=%s, images_copied=%d", output_path, len(copied_files)
+            )
+
             return {
-                "ok": True, 
-                "filename": filename,
+                "ok": True,
+                "filename": md_filename,
                 "path": str(output_path),
+                "images_dir": images_dir_name,
                 "total_segments": len(segments_cache),
-                "total_selections": sum(len(imgs) for imgs in payload.selections.values())
+                "total_selections": sum(len(imgs) for imgs in payload.selections.values()),
+                "images_copied": len(copied_files),
             }
-            
+
         except Exception as exc:
             LOGGER.exception("Export failed: %s", exc)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                detail=f"Export failed: {str(exc)}"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Export failed: {exc}",
             )
 
     return app
