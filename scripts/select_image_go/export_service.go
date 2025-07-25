@@ -145,34 +145,50 @@ func (s *ExportService) copyFile(src, dst string) error {
 	return destFile.Sync()
 }
 
-// generateMarkdown 生成 Markdown 內容
+// generateMarkdown 生成 Markdown 內容（對齊原 Python 版邏輯）
 func (s *ExportService) generateMarkdown(selections map[string][]string, copiedImages map[string]string, imagesDirName string) (string, error) {
-	var content strings.Builder
-	
-	segments := s.transcriptService.GetSegments()
-	
-	for i, segment := range segments {
-		segmentID := fmt.Sprintf("segment_%d", i)
-		
-		// 寫入段落文字
-		content.WriteString(segment.Text)
-		content.WriteString("\n\n")
-		
-		// 檢查是否有選擇的圖片
-		if selectedImages, exists := selections[segmentID]; exists && len(selectedImages) > 0 {
-			for _, imagePath := range selectedImages {
-				if _, copied := copiedImages[imagePath]; copied {
-					// 生成 Markdown 圖片連結
-					imageMarkdownPath := filepath.Join(imagesDirName, imagePath)
-					// 在 Windows 上將反斜線轉換為正斜線
-					imageMarkdownPath = strings.ReplaceAll(imageMarkdownPath, "\\", "/")
-					content.WriteString(fmt.Sprintf("![%s](%s)\n\n", imagePath, imageMarkdownPath))
-				}
-			}
-		}
-	}
-	
-	return content.String(), nil
+	var out strings.Builder
+    
+    segments := s.transcriptService.GetSegments()
+    
+    for i, seg := range segments {
+        segKey := fmt.Sprintf("%d", i) // JS 端以字串索引作為 key
+        
+        // 寫入段落原始文字
+        out.WriteString(seg.Text)
+        out.WriteString("\n")
+        
+        // 插入相關圖片
+        if imgs, ok := selections[segKey]; ok && len(imgs) > 0 {
+            out.WriteString("\n### 相關圖片\n\n")
+            for _, rel := range imgs {
+                if _, copied := copiedImages[rel]; !copied {
+                    continue
+                }
+                imgPath := filepath.ToSlash(filepath.Join(imagesDirName, rel))
+                out.WriteString(fmt.Sprintf("![%s](%s)\n", rel, imgPath))
+            }
+        }
+        
+        // 段落分隔線
+        if i < len(segments)-1 {
+            out.WriteString("\n\n---\n\n")
+        }
+    }
+    
+    // 處理未分組圖片
+    if ungroup, ok := selections["ungrouped"]; ok && len(ungroup) > 0 {
+        out.WriteString("\n\n---\n\n## 其他圖片\n\n")
+        for _, rel := range ungroup {
+            if _, copied := copiedImages[rel]; !copied {
+                continue
+            }
+            imgPath := filepath.ToSlash(filepath.Join(imagesDirName, rel))
+            out.WriteString(fmt.Sprintf("![%s](%s)\n", rel, imgPath))
+        }
+    }
+    
+    return out.String(), nil
 }
 
 // writeMarkdownFile 寫入 Markdown 檔案

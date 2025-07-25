@@ -143,13 +143,13 @@
                 background: #222; color:#eee; border:1px solid #333;
             }
             .modal-btn-cancel:hover {
-                background: #333;
+                background: #444;
             }
             .modal-btn-confirm {
-                background: #007acc; color:#fff; border:1px solid #007acc;
+                background: #0f0; color:#000; font-weight:bold;
             }
             .modal-btn-confirm:hover {
-                background: #005a99;
+                background: #0c0;
             }
             .modal-btn:disabled {
                 opacity: 0.6;
@@ -217,7 +217,7 @@
             <!-- Export Modal -->
             <div id="exportModal" class="modal-overlay">
                 <div class="modal-content">
-                    <div class="modal-header">匯出選擇的圖片</div>
+                    <div class="modal-header">準備匯出...</div>
                     <div class="modal-body">
                         確認要匯出以下選擇的圖片嗎？
                     </div>
@@ -407,7 +407,7 @@
                 title.className = 'seg-title';
                 title.textContent = `${seg.start_str || seg.start} ~ ${seg.end_str || seg.end}`;
                 const p = document.createElement('p');
-                p.textContent = seg.text;
+                p.textContent = seg.clean_text || seg.text;
                 const imgWrap = document.createElement('div');
                 imgWrap.className = 'seg-images';
                 div.appendChild(title);
@@ -487,14 +487,15 @@
 
             // ------- Export Modal Functions -------
             function modalKeyHandler(e) {
-                if (e.key === 'Escape') {
+                const modal = document.getElementById('exportModal');
+                if (!modal.classList.contains('show')) return;
+                e.stopPropagation();
+                if (e.key === 'Enter' || e.code === 'Space') {
                     e.preventDefault();
-                    e.stopPropagation();
-                    hideExportModal();
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.stopPropagation();
                     confirmExport();
+                } else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') {
+                    e.preventDefault();
+                    hideExportModal();
                 }
             }
             

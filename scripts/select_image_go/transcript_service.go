@@ -110,43 +110,29 @@ func (s *TranscriptService) parseTranscript(file *os.File) ([]Segment, error) {
 		var contentStart, contentEnd int
 		
 		if i == 0 {
-			// 第一個段落：從文件開頭到第一個 Timestamp 行之前，再加上 Timestamp 行之後的內容
-			// 前言部分：從文件開頭到第一個 Timestamp 行
-			preamble := strings.TrimSpace(contentStr[0:match[0]])
-			// Timestamp 行之後的內容
-			contentStart = match[1] // Timestamp 行結束位置
-			// 內容結束位置：到下一個 Timestamp 行開始之前，或文件結尾
-			if i+1 < len(matches) {
-				contentEnd = matches[i+1][0]
-			} else {
-				contentEnd = len(contentStr)
-			}
-			
-			// 組合前言和段落內容
-			segmentContent := preamble
-			if contentStart < contentEnd {
-				afterTimestamp := strings.TrimSpace(contentStr[contentStart:contentEnd])
-				if afterTimestamp != "" {
-					if segmentContent != "" {
-						segmentContent += "\n\n" + afterTimestamp
-					} else {
-						segmentContent = afterTimestamp
-					}
-				}
-			}
-			
-			cleanText := cleanTextForPreview(strings.TrimSpace(segmentContent))
+			// 第一個段落：保留文件前言 + Timestamp 標題行
+            contentStart = 0 // 檔案起始
+            // 內容結束位置：到下一個 Timestamp 行開始之前，或文件結尾
+            if i+1 < len(matches) {
+                contentEnd = matches[i+1][0]
+            } else {
+                contentEnd = len(contentStr)
+            }
+            // 擷取段落內容（不包含 Timestamp 行且排除前言）
+            segmentContent := strings.TrimSpace(contentStr[contentStart:contentEnd])
+            // 針對預覽文字進行清理
+            cleanText := cleanTextForPreview(segmentContent)
 			segments = append(segments, Segment{
 				Start:     startTime,
 				End:       endTime,
 				StartStr:  startTimeStr,
 				EndStr:    endTimeStr,
-				Text:      strings.TrimSpace(segmentContent),
+				Text:      segmentContent,
 				CleanText: cleanText,
 			})
 		} else {
-			// 後續段落：從當前 Timestamp 行之後開始，不包含 Timestamp 行本身
-			contentStart = match[1] // Timestamp 行結束位置
+			// 後續段落：保留 Timestamp 標題行
+            contentStart = match[0]
 			
 			// 內容結束位置：到下一個 Timestamp 行開始之前，或文件結尾
 			if i+1 < len(matches) {
@@ -175,19 +161,34 @@ func (s *TranscriptService) parseTranscript(file *os.File) ([]Segment, error) {
 
 // cleanTextForPreview 清理文本用於左側預覽，移除 Timestamp 行和多餘空白
 func cleanTextForPreview(text string) string {
-	lines := strings.Split(text, "\n")
-	var cleanLines []string
-	
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// 跳過空行和 Timestamp 行
-		if line == "" || strings.HasPrefix(line, "### Timestamp:") {
-			continue
-		}
-		cleanLines = append(cleanLines, line)
-	}
-	
-	return strings.TrimSpace(strings.Join(cleanLines, " "))
+    lines := strings.Split(text, "\n")
+    var cleanLines []string
+
+    started := false // 是否已進入真正段落（過了 Timestamp 標題）
+
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+
+        // 決定何時開始收集文字：遇到第一個 Timestamp 標題後
+        if strings.HasPrefix(line, "### Timestamp:") {
+            started = true
+            continue // 不要顯示 Timestamp 行本身
+        }
+
+        // 尚未開始，代表屬於前言/Summary，直接忽略
+        if !started {
+            continue
+        }
+
+        // 跳過空行、分隔線與其他標題
+        if line == "" || line == "---" || strings.HasPrefix(line, "#") {
+            continue
+        }
+
+        cleanLines = append(cleanLines, line)
+    }
+
+    return strings.TrimSpace(strings.Join(cleanLines, " "))
 }
 
 // GetSegments 取得所有段落
