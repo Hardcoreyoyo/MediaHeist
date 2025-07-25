@@ -148,69 +148,116 @@ def group_images_by_segments(images: List[pathlib.Path], segments: List[dict]) -
 # --- Transcript parsing ---------------------------------------------------- #
 
 def parse_transcript(path: pathlib.Path) -> List[dict]:
-    """Parse transcript file separated by headings of the form
-    ### Timestamp: **hh:mm:ss,mmm** ~ **hh:mm:ss,mmm**
+    """Parse a transcript file that may contain arbitrary prose *and* timestamp
+    sections.
 
-    Returns list of dicts with keys: start, end, text.
+    完全保留原始內容的修改版本：
+    1. 第一個 segment 包含從文件開頭到第一個 Timestamp 段落結束的所有內容
+    2. 後續 segment 包含完整的 Timestamp 段落內容
+    3. 如果沒有 Timestamp，整個文件作為單一 segment
+
+    傳回：List[dict] 其中每個 dict 包含 `start`, `end`, `text`
     """
+
     content = path.read_text(encoding="utf-8", errors="ignore")
-    pattern = re.compile(r"^###\s*Timestamp:\s*\*\*(\d{2}:\d{2}:\d{2},\d{3})\*\*\s*~\s*\*\*(\d{2}:\d{2}:\d{2},\d{3})\*\*", re.MULTILINE)
-    matches = list(pattern.finditer(content))
+
+    # Regex 捕捉 Timestamp 標題行
+    heading_re = re.compile(
+        r"^###\s*Timestamp:\s*\*\*(\d{2}:\d{2}:\d{2},\d{3})\*\*\s*~\s*\*\*(\d{2}:\d{2}:\d{2},\d{3})\*\*.*?$",
+        re.MULTILINE,
+    )
+
+    matches = list(heading_re.finditer(content))
+
+    # 若沒有任何 Timestamp，整篇視為單一段落
+    if not matches:
+        return [{"start": "", "end": "", "text": content.strip()}]
+
     segments: List[dict] = []
+
     for idx, match in enumerate(matches):
-        start_pos = match.end()
-        end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
-        segment_text = content[start_pos:end_pos].strip()
+        # 取得時間戳
+        start_time = match.group(1)
+        end_time = match.group(2)
+        
+        # 計算內容範圍
+        if idx == 0:
+            # 第一個段落：從文件開頭開始，包含所有前言內容
+            content_start = 0
+        else:
+            # 後續段落：從當前 Timestamp 行開始
+            content_start = match.start()
+        
+        # 內容結束位置：到下一個 Timestamp 行開始之前，或文件結尾
+        if idx + 1 < len(matches):
+            content_end = matches[idx + 1].start()
+        else:
+            content_end = len(content)
+        
+        # 擷取完整的段落內容
+        segment_content = content[content_start:content_end].strip()
+        
         segments.append({
-            "start": match.group(1),
-            "end": match.group(2),
-            "text": segment_text,
+            "start": start_time,
+            "end": end_time,
+            "text": segment_content,
         })
+
     return segments
 
 
-def generate_markdown(segments: List[dict], selections: Dict[str, List[str]], base_dir: pathlib.Path) -> str:
-    """Generate markdown content from segments and selected images."""
-    markdown_lines = []
-    markdown_lines.append("# 影片內容整理")
-    markdown_lines.append(f"\n生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    markdown_lines.append("")
+def generate_markdown(
+    segments: List[dict],
+    selections: Dict[str, List[str]],
+    base_dir: pathlib.Path,
+) -> str:
+    """Generate markdown by *appending* images to the original transcript text.
+
+    修改重點：
+    1. 直接輸出 segment['text']，不再生成人工標題
+    2. 僅在段落文字之後插入使用者選擇的圖片區塊
+    3. 完全保留原始文件的結構和內容
+    4. 移除所有人工添加的標題和時間戳
+    """
+
+    markdown_lines: List[str] = []
+
+    # 注意：這裡不再添加人工標題如 "# 影片內容整理" 和時間戳
+    # 直接處理原始內容
     
     for i, segment in enumerate(segments):
         segment_key = str(i)
         selected_images = selections.get(segment_key, [])
+
+        # 直接輸出原始文字內容（包含前言、標題、Timestamp 等）
+        markdown_lines.append(segment["text"])
         
-        # Add segment header
-        markdown_lines.append(f"## 時間段: {segment['start']} ~ {segment['end']}")
-        markdown_lines.append("")
-        
-        # Add segment text
-        markdown_lines.append(segment['text'])
-        markdown_lines.append("")
-        
-        # Add selected images
+        # 如果有選取圖片，插入於該段落後
         if selected_images:
+            markdown_lines.append("")  # 空行分隔
             markdown_lines.append("### 相關圖片")
             markdown_lines.append("")
             for img_path in selected_images:
-                # Use relative path for markdown
                 markdown_lines.append(f"![{img_path}]({img_path})")
-            markdown_lines.append("")
         
-        markdown_lines.append("---")
-        markdown_lines.append("")
-    
-    # Handle ungrouped selections
+        # 段落間分隔（除了最後一個段落）
+        if i < len(segments) - 1:
+            markdown_lines.append("")
+            markdown_lines.append("---")
+            markdown_lines.append("")
+
+    # 處理未分組的圖片
     ungrouped = selections.get("ungrouped", [])
     if ungrouped:
+        markdown_lines.append("")
+        markdown_lines.append("---")
+        markdown_lines.append("")
         markdown_lines.append("## 其他圖片")
         markdown_lines.append("")
         for img_path in ungrouped:
             markdown_lines.append(f"![{img_path}]({img_path})")
-        markdown_lines.append("")
-    
-    return "\n".join(markdown_lines)
 
+    return "\n".join(markdown_lines)
 
 # ------------------------------- App setup --------------------------------- #
 
@@ -393,8 +440,8 @@ def _ensure_templates_exist() -> None:
             .selected {\n            background-color: transparent;\n            position: relative;\n            font-weight: bold;\n            }\n            .selected::before {
                 color: #0f0;  /* bright green arrow */\n                content: \"\\2192\";\n                position: absolute;\n                left: -20px;\n\n                font-weight: bold;\n            }
             .confirmed {\n            background-color: transparent;\n            position: relative;\n            }\n            .confirmed::after {
-                color: #0af;  /* bright cyan bullet */\n                content: \" \\2022\";\n\n                margin-left: 4px;\n}
-            #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; z-index: 1000; }
+                color: #0af;  /* bright cyan bullet */\n                content: \" \\2022\";\n\n                margin-left: 4px;\n\n                border-left: 3px solid #0f0;}
+            #toast { position: fixed; right: 1rem; bottom: 1rem; background: rgba(0,0,0,0.8); color:#fff; padding:8px 12px; border-radius:4px; opacity:0; transition: opacity .3s; pointer-events:none; z-index: 1000; border-left: 3px solid #0f0; }
             #toast.show { opacity:1; }
             #preview { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 1rem; }
             #preview img { height: auto; width: auto; max-width: 100%; max-height: 100%; }
@@ -921,7 +968,7 @@ def _parse_args(argv: List[str] | None = None) -> Settings:
     parser = argparse.ArgumentParser(description="Start image selection server")
     parser.add_argument("--base-dir", required=True, help="Directory containing images")
     parser.add_argument("--refresh-secs", type=int, default=15, help="Rescan interval in seconds")
-    parser.add_argument("--port", type=int, default=8000, help="Port to listen on")
+    parser.add_argument("--port", type=int, default=15687, help="Port to listen on")
     parser.add_argument("--transcript", help="Transcript text file (optional)")
     parser.add_argument("--output-dir", help="Directory to save exported markdown files (default: ./output)")
     ns = parser.parse_args(argv)

@@ -5,7 +5,7 @@
 # TRANSCRIPT : transcript file path
 # OUTPUT_DIR : (optional) directory to save exported markdown files. Default: ./output
 # This script starts the server in background, waits until it is ready, then
-# opens http://127.0.0.1:8000/ via the macOS `open` command.
+# opens http://127.0.0.1:15687/ via the macOS `open` command.
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
@@ -35,13 +35,13 @@ pipenv run python select_image.py \
   --output-dir "$OUTPUT_DIR" &
 SERVER_PID=$!
 
-echo "Server PID: $SERVER_PID, waiting for readiness on port 8000 ..."
+echo "Server PID: $SERVER_PID, waiting for readiness on port 15687 ..."
 
 # Wait until the port is accepting connections
 for i in {1..30}; do
-  if curl -s "http://127.0.0.1:8000/" >/dev/null 2>&1; then
+  if curl -s "http://127.0.0.1:15687/" >/dev/null 2>&1; then
     echo "Server is up. Opening browser ..."
-    open "http://127.0.0.1:8000/"
+    open "http://127.0.0.1:15687/"
     echo "Press Ctrl+C to stop the server..."
     wait "$SERVER_PID"
     exit 0
