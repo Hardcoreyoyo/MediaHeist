@@ -97,7 +97,7 @@ frames: $(addsuffix /frames.done,$(HASHED_DIRS))
 pre_srt_summary: $(addsuffix /pre_srt_summary.done,$(HASHED_DIRS))
 srt:    $(addsuffix /srt.done,$(HASHED_DIRS))
 ocr:    $(addsuffix /ocr.done,$(HASHED_DIRS))
-# final:  $(addsuffix /final.done,$(HASHED_DIRS))
+final:  $(addsuffix /final.done,$(HASHED_DIRS))
 
 $(SRC_DIR)/%/audio.done: $(SRC_DIR)/%/download.done
 	{ \
@@ -127,22 +127,32 @@ $(SRC_DIR)/%/pre_srt_summary.done: $(SRC_DIR)/%/frames.done
 		wait $$pid; \
 	}
 
+$(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done
+	{ \
+		HASH="$(notdir $(@D))"; \
+		BASE_DIR="$(@D)/frames"; \
+		TRANSCRIPT="$(SUMMARY_DIR)/pre_$${HASH}.md"; \
+		OUTPUT_DIR="$(SUMMARY_DIR)"; \
+		PORT=15687; \
+		URL="http://127.0.0.1:$$PORT"; \
+		echo "[final $(notdir $(@D))] Starting image selection server..."; \
+		scripts/select_image \
+			--base-dir "$$BASE_DIR" \
+			--transcript "$$TRANSCRIPT" \
+			--output-dir "$$OUTPUT_DIR" \
+			2>&1 | sed -u "s/^/[final $(notdir $(@D))] /" & pid=$$!; \
+		sleep 2; \
+		echo "[final $(notdir $(@D))] Opening browser at $$URL"; \
+		open "$$URL" 2>/dev/null || echo "[final $(notdir $(@D))] Please manually open: $$URL"; \
+		echo "[final $(notdir $(@D))] Server is running at $$URL"; \
+		echo "[final $(notdir $(@D))] After completing your selection and export, press Ctrl+C here to continue."; \
+		echo "[final $(notdir $(@D))] Or press 'q' + Enter to quit immediately."; \
+		trap 'echo "[final $(notdir $(@D))] Shutting down gracefully..."; kill $$pid 2>/dev/null; touch "$(@)"; exit 0' INT TERM; \
+		wait $$pid; \
+		kill $$input_pid 2>/dev/null; \
+	}
 
-
-
-# $(SRC_DIR)/%/ocr.done: $(SRC_DIR)/%/frames.done
-# 	{ \
-# 		$(SHELL) scripts/ocr.sh "$(@D)" 2>&1 | sed -u "s/^/[ocr $(notdir $(@D))] /" & pid=$$!; \
-# 		trap 'kill $$pid 2>/dev/null' INT TERM; \
-# 		wait $$pid; \
-# 	}
-
-# $(SRC_DIR)/%/final.done: $(SRC_DIR)/%/ocr.done $(SRC_DIR)/%/srt.done
-# 			( $(SHELL) scripts/final_summary.sh "$(@D)" 2>&1 | sed -u "s/^/[final $(notdir $(@D))] /" ) &
-
-# all: download audio frames srt ocr final
-# all: download audio srt frames pre_srt_summary ocr
-all: download audio srt frames pre_srt_summary
+all: download audio srt frames pre_srt_summary final
 
 # -----------------------------------------------------------------------------
 # House-keeping ----------------------------------------------------------------

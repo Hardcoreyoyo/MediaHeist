@@ -82,7 +82,7 @@ extract_frames() {
   # -vf "select='gt(scene,${SCENE})',fps=fps=1/${MIN_GAP},scale=480:270" \
   # First extract frames with sequential numbering
   "$FFMPEG" -hide_banner -loglevel error -copyts -i "$RAW" \
-    -vf "select='gt(scene,${SCENE})',scale=480:270" \
+    -vf "select='gt(scene,${SCENE})',scale=1280:720" \
     -vsync 0 -frame_pts 1 $codec_args -threads 2 \
     "$FRAME_DIR/temp_%012d.${EXT}" || return 1
   

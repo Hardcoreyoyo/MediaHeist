@@ -33,15 +33,17 @@ ffmpeg 必須至少間隔 5 秒擷取影格並使用場景偵測 gt(scene,0.06) 
 ~~最後要依照最終選出的圖片時間資料去重新抓取高清的影片截圖。~~
 
 
-無法做到統一標準，少部分可以：自己要的不一定是科學實證下的產物
+無法做到統一標準，少部分可以：自己要的不一定是科學實證或工具產生的產物
 
 
 因為最後自己一定會要看過這份重點整理：
 最後一個 recipe 可以改成有一個良好的介面(方便閱讀及選擇圖片)可以選擇你要加入筆記的圖片。
 影片的截圖要先改成以 pre_srt_summary.sh 做出的總結中的時間標記來做資料夾區分存放截圖。
-但是 cli 可以顯示圖片嗎?
 
+現在 "良好的介面程式已經做好了"，已經打包成二進制，可以 直接執行 /Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/select_image
+使用說明在 /Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/scripts/select_image_go/README.md
 
+現在要結合 /Users/danos/syncthing-danoslive_20250210/danoslive/ResearchProject/SideProject/MediaHeist/Makefile 繼續完成目標
 
 
 
