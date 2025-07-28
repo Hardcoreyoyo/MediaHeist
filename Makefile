@@ -1,8 +1,16 @@
 # MediaHeist Makefile ---------------------------------------------------------
 # Usage examples:
-#   make download URL="https://youtu.be/xxxx"
-#   make download LIST=urls.txt
-#   make all LIST=urls.txt MAX_JOBS=8
+#   make download URL="https://youtu.be/xxxx"              # Full YouTube URL
+#   make download URL="q6qw0IJ1i7w"                       # YouTube video ID
+#   make download URL="/path/to/video.mp4"                # Local file path
+#   make download LIST=urls.txt                           # Batch processing
+#   make all LIST=urls.txt MAX_JOBS=8                     # Parallel processing
+# 
+# Supported input formats:
+#   - YouTube URLs: https://www.youtube.com/watch?v=VIDEO_ID
+#   - YouTube short URLs: https://youtu.be/VIDEO_ID
+#   - YouTube video IDs: VIDEO_ID (11 characters)
+#   - Local file paths: /absolute/path/to/video.mp4
 # -----------------------------------------------------------------------------
 SHELL := /usr/bin/env bash
 
@@ -107,8 +115,19 @@ $(SRC_DIR)/%/audio.done: $(SRC_DIR)/%/download.done
 	}
 
 $(SRC_DIR)/%/srt.done: $(SRC_DIR)/%/audio.done
+	HASH="$(notdir $(@D))"; \
+	ORIGINAL_URL=""; \
+	for url in $(URLS); do \
+	  if [ "$$(echo -n "$$url" | $(SHA1SUM_CMD) | awk '{print $$1}')" = "$$HASH" ]; then \
+	    ORIGINAL_URL="$$url"; \
+	    break; \
+	  fi; \
+	done; \
+	if [ -z "$$ORIGINAL_URL" ]; then \
+	  echo "[WARNING] Cannot find original URL for hash: $$HASH, transcription will use Whisper only"; \
+	fi; \
 	{ \
-		$(SHELL) scripts/transcribe.sh "$(@D)" 2>&1 | sed -u "s/^/[srt $(notdir $(@D))] /" & pid=$$!; \
+		ORIGINAL_URL="$$ORIGINAL_URL" $(SHELL) scripts/transcribe.sh "$(@D)" 2>&1 | sed -u "s/^/[srt $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
 		wait $$pid; \
 	}
@@ -133,13 +152,24 @@ $(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done
 		BASE_DIR="$(@D)/frames"; \
 		TRANSCRIPT="$(SUMMARY_DIR)/pre_$${HASH}.md"; \
 		OUTPUT_DIR="$(SUMMARY_DIR)"; \
-		PORT=15687; \
+		\
+		PORT_BASE=15687; \
+		PORT=$$PORT_BASE; \
+		while netstat -an | grep -q ":$$PORT " 2>/dev/null; do \
+			PORT=$$((PORT + 1)); \
+			if [ $$PORT -gt $$((PORT_BASE + 100)) ]; then \
+				echo "[final $(notdir $(@D))] Error: Cannot find available port in range $$PORT_BASE-$$((PORT_BASE + 100))"; \
+				exit 1; \
+			fi; \
+		done; \
+		\
 		URL="http://127.0.0.1:$$PORT"; \
-		echo "[final $(notdir $(@D))] Starting image selection server..."; \
+		echo "[final $(notdir $(@D))] Starting image selection server on port $$PORT..."; \
 		scripts/select_image \
 			--base-dir "$$BASE_DIR" \
 			--transcript "$$TRANSCRIPT" \
 			--output-dir "$$OUTPUT_DIR" \
+			--port "$$PORT" \
 			2>&1 | sed -u "s/^/[final $(notdir $(@D))] /" & pid=$$!; \
 		sleep 2; \
 		echo "[final $(notdir $(@D))] Opening browser at $$URL"; \

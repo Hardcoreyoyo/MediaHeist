@@ -70,7 +70,7 @@ mkdir -p "$FRAME_DIR" "$SEG_DIR"
 ###############################################################################
 export FFMPEG EXT SCENE MIN_GAP FRAME_DIR MAX_JOBS SEG_LEN
 
-# 智能動態檢測函數 (整合自 frames_v2.sh)
+# 智能動態檢測函數
 detect_video_dynamics() {
   local input="$1"
   local FF="$FFMPEG"
@@ -122,9 +122,13 @@ detect_video_dynamics() {
   if awk "BEGIN{exit !($quick_rate > 3.0)}"; then
     echo "high 0.10 5"  # 高動態：scene_threshold=0.10, min_gap=5
   elif awk "BEGIN{exit !($quick_rate > 1.0)}"; then
-    echo "medium 0.08 5"  # 中動態：scene_threshold=0.08, min_gap=5
+    echo "medium 0.01 2"  # 中動態：scene_threshold=0.01, min_gap=2
   else
-    echo "low 0.004 1"   # 低動態：scene_threshold=0.004, min_gap=1
+    if (( duration <= 1800 )); then
+      echo "low 0.004 1"   # 低動態：scene_threshold=0.004, min_gap=1
+    else
+      echo "low 0.008 3"   # 低動態：scene_threshold=0.008, min_gap=3
+    fi
   fi
 }
 
@@ -148,6 +152,8 @@ extract_frames() {
   
   info "使用過濾表達式: select='${expr}'"
   
+  info "==================================== Extracting catch frames... ========================================="
+
   # 提取關鍵影格 (使用智能參數 + mpdecimate 去重)
   "$FFMPEG" -hide_banner -loglevel error -copyts -i "$RAW" \
     -vf "select='${expr}',mpdecimate,scale=1280:720" \
@@ -159,7 +165,7 @@ extract_frames() {
   info "$FRAME_EXTRACT_RESULT"
 
   # 取得時間戳 (使用相同的過濾表達式)
-  info "Get timestamps using showinfo filter"
+  info "==================================== Get timestamps using showinfo filter ========================================="
   "$FFMPEG" -hide_banner -loglevel info -copyts -i "$RAW" \
     -vf "select='${expr}',mpdecimate,showinfo" \
     -vsync 0 -f null - 2>&1 | \

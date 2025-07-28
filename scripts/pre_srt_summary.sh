@@ -19,7 +19,7 @@ DIR="${1:-}"
 if [[ -z "$DIR" ]]; then
   error "Usage: $0 <hashdir>"; exit 1; fi
 
-SRT="$DIR/transcript.srt.srt"
+SRT="$DIR/transcript.srt"
 PROMPT_FILE="$(cd "$(dirname "$0")/.." && pwd)/prompt.txt"
 # MODEL="${PRE_SUMMARY_MODEL:-qwen3-4b-tune:latest}"
 
@@ -44,24 +44,23 @@ command -v curl >/dev/null 2>&1 || { error "curl not found"; exit 1; }
 command -v jq   >/dev/null 2>&1 || { error "jq not found"; exit 1; }
 
 # -----------------------------------------------------------------------------
-# Build prompt and invoke LLM
+# Smart chunking logic for large files
 # -----------------------------------------------------------------------------
-# info "Generating pre-SRT summary for $(basename "$DIR") using $MODEL"
 SYS_PROMPT="$(cat "$PROMPT_FILE")"
 USER_PROMPT="$(cat "$SRT")"
 
-if [[ "${DEBUG:-0}" == "1" ]]; then
-  info "Prompt file loaded (${#SYS_PROMPT} chars)"
-  info "SRT loaded (${#USER_PROMPT} chars)"
-fi
+# Calculate input size
+INPUT_SIZE=${#USER_PROMPT}
+INPUT_SIZE_KB=$((INPUT_SIZE / 1024))
+MAX_SAFE_SIZE_KB=300  # Conservative limit to avoid API issues
 
-info "Prompt content: "
-info "$SYS_PROMPT"
-info "SRT content: "
-info "$USER_PROMPT"
-info "--------------------------------------------------------------------------------"
-# info "Calling Ollama API via curl at ${OLLAMA_HOST:-http://localhost:11434}/api/chat"
-info "Calling Google Gemini API via curl at ${GOOGLE_GEMINI_HOST:-https://generativelanguage.googleapis.com/v1beta/models}/${GEMINI_MODEL_ID}/generateContent?key=${GEMINI_API_KEY}"
+info "📊 Input analysis:"
+info "   - System prompt: ${#SYS_PROMPT} chars"
+info "   - User input: ${INPUT_SIZE} chars (${INPUT_SIZE_KB}KB)"
+
+
+info "🚀 Calling Google Gemini API..."
+info "📡 Endpoint: ${GOOGLE_GEMINI_HOST:-https://generativelanguage.googleapis.com/v1beta/models}/${GEMINI_MODEL_ID}/generateContent"
 info "--------------------------------------------------------------------------------"
 
 # Endpoint can be overridden with OLLAMA_HOST (default: http://localhost:11434)
@@ -71,8 +70,16 @@ GOOGLE_GEMINI_HOST="${GOOGLE_GEMINI_HOST:-https://generativelanguage.googleapis.
 # Base64-encode the transcript (USER_PROMPT) because Gemini inlineData expects base64
 # ENCODED_SRT=$(base64 < "$SRT" | tr -d '\n')
 
-# Build JSON payload in Gemini format
-JSON_PAYLOAD=$(jq -n \
+# Check payload size before building JSON
+info "Input sizes -------------------------------------------------------------------------"
+info "System prompt:"
+info "${#SYS_PROMPT}"
+info " ------------------------------------------------------------------------------------"
+info "User input:"
+info "${#USER_PROMPT}"
+
+# Build JSON payload in Gemini format with size optimization
+JSON_PAYLOAD=$(jq -nc \
   --arg user_input "$USER_PROMPT" \
   --arg instructions "$SYS_PROMPT" \
   '{
@@ -92,31 +99,89 @@ JSON_PAYLOAD=$(jq -n \
       }
     ],
     generationConfig: {
-      temperature: 0.1,
-      "thinkingConfig": {
-        "thinkingBudget": -1,
-      },
+      temperature: 0.3,
       responseMimeType: "text/plain",
+      maxOutputTokens: 320000
     }
   }')
 
-# set -x
-# RESP_JSON=$(curl -sS -H "Content-Type: application/json" \
-#   -d "$JSON_PAYLOAD" \
-#   "$OLLAMA_HOST/api/chat")
-# set +x
+# Check final payload size
+PAYLOAD_SIZE=${#JSON_PAYLOAD}
+info "📦 Final JSON payload size: $PAYLOAD_SIZE bytes"
 
-set -x
-RESP_JSON=$(curl -sS -H "Content-Type: application/json" \
-  -d "$JSON_PAYLOAD" \
-  "$GOOGLE_GEMINI_HOST/${GEMINI_MODEL_ID}:generateContent?key=${GEMINI_API_KEY}")
+# Warn if payload is large (approaching 20MB limit)
+if [ $PAYLOAD_SIZE -gt 15000000 ]; then
+  error "⚠️  WARNING: Payload size ($PAYLOAD_SIZE bytes) is approaching Gemini API limit (20MB)"
+  error "Consider splitting the input into smaller chunks"
+fi
+
+# -----------------------------------------------------------------------------
+# Enhanced curl function with retry mechanism and better error handling
+# -----------------------------------------------------------------------------
+call_gemini_api() {
+  local payload="$1"
+  local max_retries=3
+  local retry_count=0
+  local backoff_base=2
+  
+  while [ $retry_count -lt $max_retries ]; do
+    info "Attempt $((retry_count + 1))/$max_retries - Calling Gemini API..."
+    
+    # Create temporary file for payload to avoid command line length limits
+    local temp_payload=$(mktemp)
+    printf '%s' "$payload" > "$temp_payload"
+    
+    # Enhanced curl with better timeout and chunked transfer
+    set -x
+    local response=$(curl -sS \
+      --connect-timeout 30 \
+      --max-time 300 \
+      --retry 0 \
+      --fail-with-body \
+      -H "Content-Type: application/json" \
+      -H "Transfer-Encoding: chunked" \
+      --data-binary "@$temp_payload" \
+      "$GOOGLE_GEMINI_HOST/${GEMINI_MODEL_ID}:generateContent?key=${GEMINI_API_KEY}" 2>&1)
+    local curl_exit_code=$?
+    set +x
+    
+    # Clean up temp file
+    rm -f "$temp_payload"
+    
+    # Check if request was successful
+    if [ $curl_exit_code -eq 0 ]; then
+      # Validate JSON response
+      if echo "$response" | jq -e '.candidates[0].content.parts[]?.text' >/dev/null 2>&1; then
+        info "✅ API call successful on attempt $((retry_count + 1))"
+        echo "$response"
+        return 0
+      else
+        error "❌ Invalid JSON response: $response"
+      fi
+    else
+      error "❌ curl failed with exit code $curl_exit_code: $response"
+    fi
+    
+    retry_count=$((retry_count + 1))
+    if [ $retry_count -lt $max_retries ]; then
+      local wait_time=$((backoff_base ** retry_count))
+      info "⏳ Waiting ${wait_time}s before retry..."
+      sleep $wait_time
+    fi
+  done
+  
+  error "❌ All $max_retries attempts failed"
+  return 1
+}
+
+# Call the enhanced API function
+RESP_JSON=$(call_gemini_api "$JSON_PAYLOAD")
 
 # Extract assistant message content (first candidate, concatenate all part texts)
 info "Gemini response:"
 # echo "$RESP_JSON"
 RESP=$(printf '%s\n' "$RESP_JSON" | jq -r '.candidates[0].content.parts[]?.text // empty')
 
-set +x
 
 # -----------------------------------------------------------------------------
 # Post-process: strip out <think>...</think> blocks (including newlines)
