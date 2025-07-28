@@ -11,6 +11,31 @@ INPUT="$1"; OUT_DIR="$2"
 mkdir -p "$OUT_DIR"
 
 RAW_MP4="$OUT_DIR/raw.mp4"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+MAPPING_FILE="$ROOT_DIR/.mediaheist_mapping"
+
+# -----------------------------------------------------------------------------
+# Function: save_mapping
+# Save directory name to original URL mapping
+# -----------------------------------------------------------------------------
+save_mapping() {
+    local input="$1"
+    local dir_name="$2"
+    local title="$3"
+    local type="$4"
+    
+    # Ensure mapping file exists and create header if needed
+    if [[ ! -f "$MAPPING_FILE" ]]; then
+        echo "# MediaHeist Directory Mapping File" > "$MAPPING_FILE"
+        echo "# Format: directory_name|original_url|title|type" >> "$MAPPING_FILE"
+    fi
+    
+    # Check if mapping already exists to avoid duplicates
+    if ! grep -q "^${dir_name}|" "$MAPPING_FILE" 2>/dev/null; then
+        echo "${dir_name}|${input}|${title}|${type}" >> "$MAPPING_FILE"
+        info "Saved mapping: $dir_name -> $input"
+    fi
+}
 
 # -----------------------------------------------------------------------------
 # Function: detect_input_type
@@ -62,6 +87,12 @@ copy_local_file() {
     # Use cp with error handling
     if cp "$src_file" "$dst_file"; then
         info "Local file copy succeeded: $src_file"
+        
+        # Save mapping relationship
+        local dir_name="$(basename "$(dirname "$dst_file")")"
+        local filename="$(basename "$src_file" | sed 's/\.[^.]*$//')"
+        save_mapping "$src_file" "$dir_name" "$filename" "local"
+        
         return 0
     else
         error "Failed to copy local file: $src_file"
@@ -79,10 +110,19 @@ download_youtube() {
     
     info "Downloading YouTube video: $url -> $output_file"
     
+    # Extract title and YouTube ID before downloading
+    local title=$($YTDLP --get-title "$url" 2>/dev/null | head -1 || echo "Unknown_Title")
+    local youtube_id=$(echo "$url" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$/\1/')
+    
     # Retry up to 3 times with exponential backoff
     for attempt in {1..3}; do
         if "$YTDLP" -f "bestvideo+bestaudio/best" --merge-output-format mp4 -o "$output_file" "$url"; then
             info "YouTube download succeeded: $url"
+            
+            # Save mapping relationship
+            local dir_name="$(basename "$(dirname "$output_file")")"
+            save_mapping "$url" "$dir_name" "$title" "youtube"
+            
             return 0
         fi
         warn "Attempt $attempt failed – retrying in $((attempt*attempt))s"

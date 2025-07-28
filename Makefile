@@ -52,16 +52,76 @@ ifneq ($(strip $(MAX_JOBS)),)
 endif
 
 # -----------------------------------------------------------------------------
-# Helper functions (bash) used inside $(shell) context
-# Detect SHA1 hashing command (sha1sum on Linux, shasum on macOS)
-ifeq ($(shell command -v sha1sum >/dev/null 2>&1 && echo yes),yes)
-  SHA1SUM_CMD := sha1sum
-else
-  SHA1SUM_CMD := shasum
-endif
+# Helper functions for new directory naming system
+# Mapping file to store directory name -> original URL relationships
+MAPPING_FILE := .mediaheist_mapping
 
-# Helper function: returns SHA1 hash of a string (URL)
-hash_url = $(shell echo -n "$1" | $(SHA1SUM_CMD) | awk '{print $$1}')
+# Function: extract YouTube ID from URL or return as-is if already an ID
+extract_youtube_id = $(shell \
+  echo "[makefile main] 準備提取 YouTube ID: $1" >&2; \
+  result=$$(echo "$1" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
+  echo "[makefile main] 提取到的 YouTube ID: $$result" >&2; \
+  echo "$$result")
+
+# Function: generate 6-character UUID prefix for local files
+generate_uuid_prefix = $(shell \
+  echo "[makefile main] 準備生成 6 位 UUID 前綴" >&2; \
+  result=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
+  echo "[makefile main] 生成的 UUID 前綴: $$result" >&2; \
+  echo "$$result")
+
+# Function: clean title/filename (remove special chars, keep ASCII and CJK)
+clean_name = $(shell \
+  echo "[makefile main] 準備清理名稱: $1" >&2; \
+  result=$$(echo "$1" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$1" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+  echo "[makefile main] 清理後的名稱: $$result" >&2; \
+  echo "$$result")
+  
+# Main function: generate directory name based on input type
+generate_dir_name = $(shell \
+  input="$1"; \
+  echo "[makefile main] 準備生成目錄名稱，輸入: $$input" >&2; \
+  ytdlp_cmd="$${YTDLP:-yt-dlp}"; \
+  if echo "$$input" | grep -qE "(youtube\.com|youtu\.be)"; then \
+    url="$$input"; \
+    echo "[makefile main] 識別為 YouTube URL" >&2; \
+  elif echo "$$input" | grep -qE "^[a-zA-Z0-9_-]{11}$$"; then \
+    url="https://www.youtube.com/watch?v=$$input"; \
+    echo "[makefile main] 識別為 YouTube ID，轉換為 URL" >&2; \
+  else \
+    url=""; \
+    echo "[makefile main] 非 YouTube 輸入" >&2; \
+  fi; \
+  if [ -n "$$url" ]; then \
+    echo "[makefile main] 開始處理 YouTube 內容: $$url" >&2; \
+    title=$$($$ytdlp_cmd --get-title "$$url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+    echo "[makefile main] 取得標題: $$title" >&2; \
+    youtube_id=$$(echo "$$input" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
+    echo "[makefile main] 提取 YouTube ID: $$youtube_id" >&2; \
+    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    echo "[makefile main] 清理後標題: $$clean_title" >&2; \
+    result="$${clean_title}_$${youtube_id}"; \
+    echo "[makefile main] 生成的 YouTube 目錄名稱: $$result" >&2; \
+    echo "$$result"; \
+  elif echo "$$input" | grep -q "^/"; then \
+    echo "[makefile main] 開始處理本地檔案: $$input" >&2; \
+    filename=$$(basename "$$input" | sed 's/\.[^.]*$$//'); \
+    echo "[makefile main] 提取檔案名: $$filename" >&2; \
+    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    echo "[makefile main] 清理後檔案名: $$clean_filename" >&2; \
+    uuid_prefix=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
+    echo "[makefile main] 生成 UUID 前綴: $$uuid_prefix" >&2; \
+    result="$${clean_filename}_$${uuid_prefix}"; \
+    echo "[makefile main] 生成的本地檔案目錄名稱: $$result" >&2; \
+    echo "$$result"; \
+  else \
+    echo "[makefile main] 處理其他類型輸入" >&2; \
+    result=$$(echo "$1" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    echo "[makefile main] 生成的一般目錄名稱: $$result" >&2; \
+    echo "$$result"; \
+  fi)
+
+
 
 # -----------------------------------------------------------------------------
 # Target: download -------------------------------------------------------------
@@ -74,18 +134,33 @@ endif
 endif
 
 URLS := $(if $(URL),$(URL),$(shell cat $(LIST)))
-HASHED_DIRS := $(patsubst %,$(SRC_DIR)/%,$(foreach u,$(URLS),$(call hash_url,$(u))))
+NAMED_DIRS := $(patsubst %,$(SRC_DIR)/%,$(foreach u,$(URLS),$(call generate_dir_name,$(u))))
 
 .PHONY: download
- download: $(addsuffix /download.done,$(HASHED_DIRS))
+ download: $(addsuffix /download.done,$(NAMED_DIRS))
+
+# Create a mapping from URL to directory name for download recipes
+define url_to_dir_mapping
+$(foreach u,$(URLS),$(u):$(call generate_dir_name,$(u)))
+endef
 
 $(SRC_DIR)/%/download.done:
 	@mkdir -p "$(@D)"
-		@# Resolve the original URL that maps to this hash directory
-	@U=""; \
-	for url in $(URLS); do \
-	  if [ "$$(echo -n "$$url" | $(SHA1SUM_CMD) | awk '{print $$1}')" = "$(notdir $(@D))" ]; then U="$$url"; break; fi; \
+	@# Find the URL that corresponds to this directory
+	@DIR_NAME="$(notdir $(@D))"; \
+	U=""; \
+	for mapping in $(url_to_dir_mapping); do \
+	  url=$${mapping%%:*}; \
+	  dir=$${mapping##*:}; \
+	  if [ "$$dir" = "$$DIR_NAME" ]; then \
+	    U="$$url"; \
+	    break; \
+	  fi; \
 	done; \
+	if [ -z "$$U" ]; then \
+	  echo "[ERROR] Cannot find URL for directory: $$DIR_NAME"; \
+	  exit 1; \
+	fi; \
 	echo "[Make] Starting download $$U -> $(@D)"; \
 	{ \
 		$(SHELL) scripts/download.sh "$$U" "$(@D)" 2>&1 | sed -u "s/^/[download $(notdir $(@D))] /" & pid=$$!; \
@@ -100,53 +175,81 @@ $(SRC_DIR)/%/download.done:
 # -----------------------------------------------------------------------------
 .PHONY: audio srt frames pre_srt_summary ocr final all
 
-audio: $(addsuffix /audio.done,$(HASHED_DIRS))
-frames: $(addsuffix /frames.done,$(HASHED_DIRS))
-pre_srt_summary: $(addsuffix /pre_srt_summary.done,$(HASHED_DIRS))
-srt:    $(addsuffix /srt.done,$(HASHED_DIRS))
-ocr:    $(addsuffix /ocr.done,$(HASHED_DIRS))
-final:  $(addsuffix /final.done,$(HASHED_DIRS))
+audio: $(addsuffix /audio.done,$(NAMED_DIRS))
+frames: $(addsuffix /frames.done,$(NAMED_DIRS))
+pre_srt_summary: $(addsuffix /pre_srt_summary.done,$(NAMED_DIRS))
+srt:    $(addsuffix /srt.done,$(NAMED_DIRS))
+ocr:    $(addsuffix /ocr.done,$(NAMED_DIRS))
+final:  $(addsuffix /final.done,$(NAMED_DIRS))
 
 $(SRC_DIR)/%/audio.done: $(SRC_DIR)/%/download.done
 	{ \
 		$(SHELL) scripts/audio.sh "$(@D)" 2>&1 | sed -u "s/^/[audio $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
-		wait $$pid; \
+		if wait $$pid; then \
+			echo "[audio $(notdir $(@D))] Audio extraction completed successfully"; \
+		else \
+			echo "[audio $(notdir $(@D))] Audio extraction failed"; \
+			exit 1; \
+		fi; \
 	}
 
 $(SRC_DIR)/%/srt.done: $(SRC_DIR)/%/audio.done
-	HASH="$(notdir $(@D))"; \
+	DIR_NAME="$(notdir $(@D))"; \
 	ORIGINAL_URL=""; \
-	for url in $(URLS); do \
-	  if [ "$$(echo -n "$$url" | $(SHA1SUM_CMD) | awk '{print $$1}')" = "$$HASH" ]; then \
-	    ORIGINAL_URL="$$url"; \
-	    break; \
-	  fi; \
-	done; \
-	if [ -z "$$ORIGINAL_URL" ]; then \
-	  echo "[WARNING] Cannot find original URL for hash: $$HASH, transcription will use Whisper only"; \
+	echo "[srt $$DIR_NAME] Looking for original URL..."; \
+	if [ -f "$(MAPPING_FILE)" ]; then \
+		echo "[srt $$DIR_NAME] Checking mapping file: $(MAPPING_FILE)"; \
+		ORIGINAL_URL=$$(grep "^$$DIR_NAME|" "$(MAPPING_FILE)" | cut -d'|' -f2 | head -1); \
+		if [ -n "$$ORIGINAL_URL" ] && [ "$$ORIGINAL_URL" != "" ]; then \
+			echo "[srt $$DIR_NAME] Found URL in mapping file: $$ORIGINAL_URL"; \
+		else \
+			echo "[srt $$DIR_NAME] Directory $$DIR_NAME not found in mapping file or URL is empty"; \
+			ORIGINAL_URL=""; \
+		fi; \
+	else \
+		echo "[srt $$DIR_NAME] Mapping file not found: $(MAPPING_FILE)"; \
 	fi; \
+	if [ -z "$$ORIGINAL_URL" ]; then \
+		echo "[srt $$DIR_NAME] No URL found, transcription will use Whisper.cpp only"; \
+	fi; \
+	echo "[srt $$DIR_NAME] Starting transcription with URL: '$$ORIGINAL_URL'"; \
 	{ \
 		ORIGINAL_URL="$$ORIGINAL_URL" $(SHELL) scripts/transcribe.sh "$(@D)" 2>&1 | sed -u "s/^/[srt $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
-		wait $$pid; \
+		if wait $$pid; then \
+			echo "[srt $(notdir $(@D))] Transcription completed successfully"; \
+		else \
+			echo "[srt $(notdir $(@D))] Transcription failed"; \
+			exit 1; \
+		fi; \
 	}
 
-$(SRC_DIR)/%/frames.done: $(SRC_DIR)/%/audio.done
+$(SRC_DIR)/%/frames.done: $(SRC_DIR)/%/download.done
 	{ \
 		$(SHELL) scripts/frames.sh "$(@D)" 2>&1 | sed -u "s/^/[frames $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
-		wait $$pid; \
+		if wait $$pid; then \
+			echo "[frames $(notdir $(@D))] Frame extraction completed successfully"; \
+		else \
+			echo "[frames $(notdir $(@D))] Frame extraction failed"; \
+			exit 1; \
+		fi; \
 	}
 
-$(SRC_DIR)/%/pre_srt_summary.done: $(SRC_DIR)/%/frames.done
+$(SRC_DIR)/%/pre_srt_summary.done: $(SRC_DIR)/%/srt.done
 	{ \
 		$(SHELL) scripts/pre_srt_summary.sh "$(@D)" 2>&1 | sed -u "s/^/[pre_srt_summary $(notdir $(@D))] /" & pid=$$!; \
 		trap 'kill $$pid 2>/dev/null' INT TERM; \
-		wait $$pid; \
+		if wait $$pid; then \
+			echo "[pre_srt_summary $(notdir $(@D))] Pre-summary completed successfully"; \
+		else \
+			echo "[pre_srt_summary $(notdir $(@D))] Pre-summary failed"; \
+			exit 1; \
+		fi; \
 	}
 
-$(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done
+$(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done $(SRC_DIR)/%/frames.done
 	{ \
 		HASH="$(notdir $(@D))"; \
 		BASE_DIR="$(@D)/frames"; \
@@ -182,7 +285,14 @@ $(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done
 		kill $$input_pid 2>/dev/null; \
 	}
 
-all: download audio srt frames pre_srt_summary final
+all: final
+
+# Abstract target dependencies (must match the actual file target dependencies)
+final: pre_srt_summary frames
+pre_srt_summary: srt
+srt: audio
+audio: download
+frames: download
 
 # -----------------------------------------------------------------------------
 # House-keeping ----------------------------------------------------------------

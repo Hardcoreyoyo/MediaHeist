@@ -59,6 +59,15 @@ if [[ "${DEBUG_ENV:-0}" == "1" ]]; then
 fi
 
 ###############################################################################
+# Load .env file if it exists                                                  #
+###############################################################################
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a  # automatically export all variables
+  source "$ROOT_DIR/.env"
+  set +a  # turn off automatic export
+fi
+
+###############################################################################
 # Parallelism & binary locations                                               #
 ###############################################################################
 # Allow callers / CI to override via environment variables or .env (Makefile)  #

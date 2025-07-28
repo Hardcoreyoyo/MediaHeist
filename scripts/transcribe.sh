@@ -14,21 +14,53 @@ TRANSCRIPT="$DIR/transcript.srt"
 # zh-TW: 台灣繁體中文, zh: 中文(通常是簡體), zh-CN: 中國簡體, en: 英文
 LANG_PRIORITY=("zh-TW" "zh" "zh-CN" "en")
 
-# 從目錄名稱取得原始 URL (假設可以從 Makefile 傳遞)
+# 從目錄名稱取得原始 URL (支援映射檔案和環境變數)
 get_original_url() {
-    # 嘗試從環境變數或檔案取得原始 URL
-    if [[ -n "${ORIGINAL_URL:-}" ]]; then
-        echo "$ORIGINAL_URL"
-        return 0
+    local url=""
+    
+    # 優先使用環境變數，但確保不是空字串
+    if [[ -n "${ORIGINAL_URL:-}" && "${ORIGINAL_URL}" != "" ]]; then
+        url="$ORIGINAL_URL"
+        info "Using URL from environment variable: $url"
+    else
+        # 從映射檔案讀取
+        local dir_name="$(basename "$DIR")"
+        local root_dir="$(cd "$(dirname "$0")/.." && pwd)"
+        local mapping_file="$root_dir/.mediaheist_mapping"
+        
+        info "Looking for URL in mapping file: $mapping_file for directory: $dir_name"
+        
+        if [[ -f "$mapping_file" ]]; then
+            url=$(grep "^${dir_name}|" "$mapping_file" | cut -d'|' -f2 | head -1)
+            if [[ -n "$url" && "$url" != "" ]]; then
+                info "Found URL in mapping file: $url"
+            else
+                info "Directory $dir_name not found in mapping file or URL is empty"
+                url=""
+            fi
+        else
+            info "Mapping file not found: $mapping_file"
+        fi
+        
+        # 如果映射檔案沒有找到，嘗試從 .url 檔案讀取（向後相容）
+        if [[ -z "$url" && -f "$DIR/.url" ]]; then
+            url=$(cat "$DIR/.url")
+            if [[ -n "$url" && "$url" != "" ]]; then
+                info "Found URL in .url file: $url"
+            else
+                url=""
+            fi
+        fi
     fi
     
-    # 嘗試從 .url 檔案讀取
-    if [[ -f "$DIR/.url" ]]; then
-        cat "$DIR/.url"
+    # 確保返回的URL不是空字串
+    if [[ -n "$url" && "$url" != "" ]]; then
+        echo "$url"
         return 0
+    else
+        info "No valid URL found for directory: $(basename "$DIR")"
+        return 1
     fi
-    
-    return 1
 }
 
 # 下載 CC 字幕 (按優先順序)
@@ -163,8 +195,11 @@ is_youtube_source() {
 # 主處理邏輯
 info "Starting transcription process for: $DIR"
 
-# 1. 嘗試下載 CC 字幕 (針對 YouTube 來源)
+# 1. 嘗試取得原始URL並下載 CC 字幕 (針對 YouTube 來源)
+ORIGINAL_URL=""
 if ORIGINAL_URL=$(get_original_url); then
+    info "Original URL obtained: $ORIGINAL_URL"
+    
     if is_youtube_source "$ORIGINAL_URL"; then
         info "YouTube source detected: $ORIGINAL_URL"
         info "Trying CC subtitles first"
@@ -182,6 +217,7 @@ if ORIGINAL_URL=$(get_original_url); then
     fi
 else
     info "Original URL unavailable, using Whisper.cpp directly"
+    info "This may happen if: 1) No mapping file exists, 2) Directory not in mapping file, 3) URL is empty"
 fi
 
 # 2. 降級到 Whisper.cpp 轉錄
