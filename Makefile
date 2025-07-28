@@ -70,10 +70,10 @@ generate_uuid_prefix = $(shell \
   echo "[makefile main] 生成的 UUID 前綴: $$result" >&2; \
   echo "$$result")
 
-# Function: clean title/filename (remove special chars, keep ASCII and CJK)
+# Function: clean title/filename (replace special chars with underscore, keep ASCII and CJK)
 clean_name = $(shell \
   echo "[makefile main] 準備清理名稱: $1" >&2; \
-  result=$$(echo "$1" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$1" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+  result=$$(echo "$1" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$1" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]/_/g; s/_\+/_/g'); \
   echo "[makefile main] 清理後的名稱: $$result" >&2; \
   echo "$$result")
   
@@ -150,24 +150,41 @@ create-url-mapping:
 	@mkdir -p $(SRC_DIR)
 	@echo "# URL to directory mapping" > $(SRC_DIR)/.url_mapping
 	@for url in $(URLS); do \
-	  if echo "$$url" | grep -qE "(youtube\.com|youtu\.be)"; then \
-	    title=$$($(YTDLP) --get-title "$$url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	  echo "[create-url-mapping] Processing URL: $$url" >&2; \
+	  if echo "$$url" | grep -E '(youtube\.com|youtu\.be)' >/dev/null 2>&1; then \
+	    echo "[create-url-mapping] Detected as YouTube URL" >&2; \
+	    ytdlp_cmd="$${YTDLP:-yt-dlp}"; \
+	    title=$$($$ytdlp_cmd --get-title "$$url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	    echo "[create-url-mapping] Got title: $$title" >&2; \
 	    youtube_id=$$(echo "$$url" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
+	    echo "[create-url-mapping] Extracted YouTube ID: $$youtube_id" >&2; \
 	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    echo "[create-url-mapping] Cleaned title: $$clean_title" >&2; \
 	    dir_name="$${clean_title}_$${youtube_id}"; \
-	  elif echo "$$url" | grep -qE "^[a-zA-Z0-9_-]{11}$$"; then \
+	  elif echo "$$url" | grep -E '^[a-zA-Z0-9_-]{11}$$' >/dev/null 2>&1; then \
+	    echo "[create-url-mapping] Detected as YouTube ID" >&2; \
 	    full_url="https://www.youtube.com/watch?v=$$url"; \
-	    title=$$($(YTDLP) --get-title "$$full_url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	    echo "[create-url-mapping] Converted to full URL: $$full_url" >&2; \
+	    ytdlp_cmd="$${YTDLP:-yt-dlp}"; \
+	    title=$$($$ytdlp_cmd --get-title "$$full_url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	    echo "[create-url-mapping] Got title: $$title" >&2; \
 	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    echo "[create-url-mapping] Cleaned title: $$clean_title" >&2; \
 	    dir_name="$${clean_title}_$$url"; \
-	  elif echo "$$url" | grep -q "^/"; then \
+	  elif echo "$$url" | grep '^/' >/dev/null 2>&1; then \
+	    echo "[create-url-mapping] Detected as local file" >&2; \
 	    filename=$$(basename "$$url" | sed 's/\.[^.]*$$//'); \
+	    echo "[create-url-mapping] Extracted filename: $$filename" >&2; \
 	    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    echo "[create-url-mapping] Cleaned filename: $$clean_filename" >&2; \
 	    uuid_prefix=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
+	    echo "[create-url-mapping] Generated UUID prefix: $$uuid_prefix" >&2; \
 	    dir_name="$${clean_filename}_$${uuid_prefix}"; \
 	  else \
+	    echo "[create-url-mapping] Processing as general input" >&2; \
 	    dir_name=$$(echo "$$url" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
 	  fi; \
+	  echo "[create-url-mapping] Final directory name: $$dir_name" >&2; \
 	  echo "$$dir_name|$$url" >> $(SRC_DIR)/.url_mapping; \
 	done
 
