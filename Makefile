@@ -134,53 +134,111 @@ endif
 endif
 
 URLS := $(if $(URL),$(URL),$(shell cat $(LIST)))
-NAMED_DIRS := $(patsubst %,$(SRC_DIR)/%,$(foreach u,$(URLS),$(call generate_dir_name,$(u))))
 
 .PHONY: download
- download: $(addsuffix /download.done,$(NAMED_DIRS))
+download: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/download.done; \
+	  fi; \
+	done
 
-# Create a mapping from URL to directory name for download recipes
-define url_to_dir_mapping
-$(foreach u,$(URLS),$(u):$(call generate_dir_name,$(u)))
-endef
+# Create URL mapping file to avoid shell expansion issues
+.PHONY: create-url-mapping
+create-url-mapping:
+	@mkdir -p $(SRC_DIR)
+	@echo "# URL to directory mapping" > $(SRC_DIR)/.url_mapping
+	@for url in $(URLS); do \
+	  if echo "$$url" | grep -qE "(youtube\.com|youtu\.be)"; then \
+	    title=$$($(YTDLP) --get-title "$$url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	    youtube_id=$$(echo "$$url" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
+	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    dir_name="$${clean_title}_$${youtube_id}"; \
+	  elif echo "$$url" | grep -qE "^[a-zA-Z0-9_-]{11}$$"; then \
+	    full_url="https://www.youtube.com/watch?v=$$url"; \
+	    title=$$($(YTDLP) --get-title "$$full_url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
+	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    dir_name="$${clean_title}_$$url"; \
+	  elif echo "$$url" | grep -q "^/"; then \
+	    filename=$$(basename "$$url" | sed 's/\.[^.]*$$//'); \
+	    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    uuid_prefix=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
+	    dir_name="$${clean_filename}_$${uuid_prefix}"; \
+	  else \
+	    dir_name=$$(echo "$$url" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	  fi; \
+	  echo "$$dir_name|$$url" >> $(SRC_DIR)/.url_mapping; \
+	done
 
 $(SRC_DIR)/%/download.done:
 	@mkdir -p "$(@D)"
-	@# Find the URL that corresponds to this directory
+	@# Find the URL that corresponds to this directory using mapping file
 	@DIR_NAME="$(notdir $(@D))"; \
-	U=""; \
-	for mapping in $(url_to_dir_mapping); do \
-	  url=$${mapping%%:*}; \
-	  dir=$${mapping##*:}; \
-	  if [ "$$dir" = "$$DIR_NAME" ]; then \
-	    U="$$url"; \
-	    break; \
-	  fi; \
-	done; \
+	if [ -f "$(SRC_DIR)/.url_mapping" ]; then \
+	  U=$$(grep "^$$DIR_NAME|" "$(SRC_DIR)/.url_mapping" | cut -d'|' -f2 | head -1); \
+	else \
+	  echo "[ERROR] URL mapping file not found"; \
+	  exit 1; \
+	fi; \
 	if [ -z "$$U" ]; then \
 	  echo "[ERROR] Cannot find URL for directory: $$DIR_NAME"; \
 	  exit 1; \
 	fi; \
 	echo "[Make] Starting download $$U -> $(@D)"; \
-	{ \
-		$(SHELL) scripts/download.sh "$$U" "$(@D)" 2>&1 | sed -u "s/^/[download $(notdir $(@D))] /" & pid=$$!; \
-		trap 'kill $$pid 2>/dev/null' INT TERM; \
-		wait $$pid; \
-	}
+	if $(SHELL) scripts/download.sh "$$U" "$(@D)" 2>&1 | sed -u "s/^/[download $(notdir $(@D))] /"; then \
+	  echo "[Make] Download completed successfully: $$U"; \
+	else \
+	  echo "[Make] Download failed: $$U"; \
+	  exit 1; \
+	fi
 
 # -----------------------------------------------------------------------------
 # Rules for audio, frames, srt, ocr -------------------------------------------
 # Each depends on .done of previous stage
 # Parallelised via GNU make -j or MAX_JOBS
 # -----------------------------------------------------------------------------
-.PHONY: audio srt frames pre_srt_summary ocr final all
+.PHONY: audio srt frames pre_srt_summary final all
 
-audio: $(addsuffix /audio.done,$(NAMED_DIRS))
-frames: $(addsuffix /frames.done,$(NAMED_DIRS))
-pre_srt_summary: $(addsuffix /pre_srt_summary.done,$(NAMED_DIRS))
-srt:    $(addsuffix /srt.done,$(NAMED_DIRS))
-ocr:    $(addsuffix /ocr.done,$(NAMED_DIRS))
-final:  $(addsuffix /final.done,$(NAMED_DIRS))
+audio: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/audio.done; \
+	  fi; \
+	done
+
+frames: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/frames.done; \
+	  fi; \
+	done
+
+pre_srt_summary: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/pre_srt_summary.done; \
+	  fi; \
+	done
+
+srt: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/srt.done; \
+	  fi; \
+	done
+
+final: create-url-mapping
+	@for mapping in $$(cat $(SRC_DIR)/.url_mapping | grep -v '^#'); do \
+	  dir_name=$${mapping%%|*}; \
+	  if [ -n "$$dir_name" ]; then \
+	    $(MAKE) $(SRC_DIR)/$$dir_name/final.done; \
+	  fi; \
+	done
 
 $(SRC_DIR)/%/audio.done: $(SRC_DIR)/%/download.done
 	{ \
