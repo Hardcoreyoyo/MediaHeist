@@ -12,6 +12,9 @@
 #   - YouTube video IDs: VIDEO_ID (11 characters)
 #   - Local file paths: /absolute/path/to/video.mp4
 # -----------------------------------------------------------------------------
+
+# Default target - show help
+.DEFAULT_GOAL := help
 SHELL := /usr/bin/env bash
 
 # Root dirs
@@ -78,8 +81,9 @@ clean_name = $(shell \
   echo "$$result")
   
 # Main function: generate directory name based on input type
-generate_dir_name = $(shell \
-  input="$1"; \
+define generate_dir_name
+$(shell \
+  input="$(1)"; \
   echo "[makefile main] 準備生成目錄名稱，輸入: $$input" >&2; \
   ytdlp_cmd="$${YTDLP:-yt-dlp}"; \
   if echo "$$input" | grep -qE "(youtube\.com|youtu\.be)"; then \
@@ -98,7 +102,7 @@ generate_dir_name = $(shell \
     echo "[makefile main] 取得標題: $$title" >&2; \
     youtube_id=$$(echo "$$input" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
     echo "[makefile main] 提取 YouTube ID: $$youtube_id" >&2; \
-    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]/_/g; s/_\+/_/g'); \
     echo "[makefile main] 清理後標題: $$clean_title" >&2; \
     result="$${clean_title}_$${youtube_id}"; \
     echo "[makefile main] 生成的 YouTube 目錄名稱: $$result" >&2; \
@@ -107,7 +111,7 @@ generate_dir_name = $(shell \
     echo "[makefile main] 開始處理本地檔案: $$input" >&2; \
     filename=$$(basename "$$input" | sed 's/\.[^.]*$$//'); \
     echo "[makefile main] 提取檔案名: $$filename" >&2; \
-    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]/_/g; s/_\+/_/g'); \
     echo "[makefile main] 清理後檔案名: $$clean_filename" >&2; \
     uuid_prefix=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
     echo "[makefile main] 生成 UUID 前綴: $$uuid_prefix" >&2; \
@@ -116,10 +120,11 @@ generate_dir_name = $(shell \
     echo "$$result"; \
   else \
     echo "[makefile main] 處理其他類型輸入" >&2; \
-    result=$$(echo "$1" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+    result=$$(echo "$(1)" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]/_/g; s/_\+/_/g'); \
     echo "[makefile main] 生成的一般目錄名稱: $$result" >&2; \
     echo "$$result"; \
   fi)
+endef
 
 
 
@@ -158,7 +163,7 @@ create-url-mapping:
 	    echo "[create-url-mapping] Got title: $$title" >&2; \
 	    youtube_id=$$(echo "$$url" | sed -E 's/.*[?&]v=([a-zA-Z0-9_-]{11}).*/\1/; s/.*youtu\.be\/([a-zA-Z0-9_-]{11}).*/\1/; s/^([a-zA-Z0-9_-]{11})$$/\1/'); \
 	    echo "[create-url-mapping] Extracted YouTube ID: $$youtube_id" >&2; \
-	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
 	    echo "[create-url-mapping] Cleaned title: $$clean_title" >&2; \
 	    dir_name="$${clean_title}_$${youtube_id}"; \
 	  elif echo "$$url" | grep -E '^[a-zA-Z0-9_-]{11}$$' >/dev/null 2>&1; then \
@@ -168,14 +173,14 @@ create-url-mapping:
 	    ytdlp_cmd="$${YTDLP:-yt-dlp}"; \
 	    title=$$($$ytdlp_cmd --get-title "$$full_url" 2>/dev/null | head -1 || echo "Unknown_Title"); \
 	    echo "[create-url-mapping] Got title: $$title" >&2; \
-	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    clean_title=$$(echo "$$title" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$$title" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
 	    echo "[create-url-mapping] Cleaned title: $$clean_title" >&2; \
 	    dir_name="$${clean_title}_$$url"; \
 	  elif echo "$$url" | grep '^/' >/dev/null 2>&1; then \
 	    echo "[create-url-mapping] Detected as local file" >&2; \
 	    filename=$$(basename "$$url" | sed 's/\.[^.]*$$//'); \
 	    echo "[create-url-mapping] Extracted filename: $$filename" >&2; \
-	    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]//g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
+	    clean_filename=$$(echo "$$filename" | sed 's/[[:space:]]\+/_/g' | perl -CSD -pe 's/[^A-Za-z0-9_\-\x{4E00}-\x{9FFF}]/_/g; s/_+/_/g' 2>/dev/null || echo "$$filename" | sed 's/[[:space:]]\+/_/g; s/[^A-Za-z0-9_-]//g'); \
 	    echo "[create-url-mapping] Cleaned filename: $$clean_filename" >&2; \
 	    uuid_prefix=$$(head -c 6 /dev/urandom | base64 | tr -d '+/=' | head -c 6 2>/dev/null || date +%s | tail -c 7); \
 	    echo "[create-url-mapping] Generated UUID prefix: $$uuid_prefix" >&2; \
@@ -333,7 +338,21 @@ $(SRC_DIR)/%/final.done: $(SRC_DIR)/%/pre_srt_summary.done $(SRC_DIR)/%/frames.d
 		\
 		PORT_BASE=15687; \
 		PORT=$$PORT_BASE; \
-		while netstat -an | grep -q ":$$PORT " 2>/dev/null; do \
+		echo "[final $(notdir $(@D))] Searching for available port starting from $$PORT_BASE..."; \
+		while true; do \
+			if command -v lsof >/dev/null 2>&1; then \
+				if ! lsof -i :$$PORT >/dev/null 2>&1; then \
+					break; \
+				fi; \
+			elif command -v netstat >/dev/null 2>&1; then \
+				if ! netstat -an 2>/dev/null | grep -q ":$$PORT[[:space:]]\|:$$PORT$$"; then \
+					break; \
+				fi; \
+			else \
+				echo "[final $(notdir $(@D))] Warning: Neither lsof nor netstat available, using port $$PORT without checking"; \
+				break; \
+			fi; \
+			echo "[final $(notdir $(@D))] Port $$PORT is in use, trying next port..."; \
 			PORT=$$((PORT + 1)); \
 			if [ $$PORT -gt $$((PORT_BASE + 100)) ]; then \
 				echo "[final $(notdir $(@D))] Error: Cannot find available port in range $$PORT_BASE-$$((PORT_BASE + 100))"; \
@@ -374,4 +393,39 @@ frames: download
 clean:
 	rm -rf $(TMP_DIR) $(SRC_DIR) $(SUMMARY_DIR)
 
-.PHONY: clean
+# Help target - display usage information
+help:
+	@echo "MediaHeist - 媒體處理工具包"
+	@echo ""
+	@echo "使用方式:"
+	@echo "  make <target> [參數...]"
+	@echo ""
+	@echo "常用目標:"
+	@echo "  download URL=<url>              下載並處理單一媒體"
+	@echo "  download LIST=<file>            批次處理媒體列表"
+	@echo "  all LIST=<file> MAX_JOBS=<n>    平行處理所有步驟"
+	@echo "  transcribe                      僅執行轉錄步驟"
+	@echo "  frames                         僅執行影格擷取"
+	@echo "  summary                        僅執行摘要生成"
+	@echo "  clean                          清理暫存檔案"
+	@echo "  help                           顯示此說明"
+	@echo ""
+	@echo "支援的輸入格式:"
+	@echo "  - YouTube URLs: https://www.youtube.com/watch?v=VIDEO_ID"
+	@echo "  - YouTube 短網址: https://youtu.be/VIDEO_ID"
+	@echo "  - YouTube 影片 ID: VIDEO_ID (11 字元)"
+	@echo "  - 本地檔案路徑: /absolute/path/to/video.mp4"
+	@echo ""
+	@echo "環境變數設定:"
+	@echo "  請在 .env 檔案中設定:"
+	@echo "  - GEMINI_API_KEY=Google Gemini API 金鑰"
+	@echo "  - GEMINI_MODEL_ID=使用的模型 ID"
+	@echo "  - WHISPER_BIN=Whisper 執行檔路徑"
+	@echo "  - WHISPER_MODEL=Whisper 模型名稱"
+	@echo ""
+	@echo "範例:"
+	@echo "  make download URL=\"https://youtu.be/dQw4w9WgXcQ\""
+	@echo "  make download LIST=\"urls.txt\""
+	@echo "  make all LIST=\"batch.txt\" MAX_JOBS=4"
+
+.PHONY: clean help

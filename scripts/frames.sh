@@ -21,7 +21,7 @@ EXT="jpg"
 SCENE="0.04"
 MIN_GAP="5"
 # HASH_THRESHOLD="5999"
-HASH_THRESHOLD="999"
+HASH_THRESHOLD="399"
 # determine stream time_base denominator (e.g., 90000)
 TIME_BASE_DEN=$(ffprobe -v error -select_streams v:0 -show_entries stream=time_base -of csv=p=0 "$RAW" | awk -F'/' '{print $2}')
 if [[ -z "$TIME_BASE_DEN" ]]; then TIME_BASE_DEN=90000; fi
@@ -110,32 +110,81 @@ detect_video_dynamics() {
     local frames=$("$FF" -ss "$off" -i "$input" -t "$sample_len" \
                    -vf "select='gt(scene,0.01)',showinfo" \
                    -f null - 2>&1 | grep -c pts_time || echo 0)
+    # 確保 frames 是數字，避免空值導致算術錯誤
+    frames=${frames:-0}
     total_scene_frames=$(( total_scene_frames + frames ))
   done
   
   # 平均每秒場景變化率
   local total_seconds=$(( sample_count * sample_len ))
-  local quick_rate=$(awk "BEGIN{printf \"%.3f\", $total_scene_frames/$total_seconds}")
+  
+  # 確保變數不為空且避免除零錯誤
+  total_scene_frames=${total_scene_frames:-0}
+  total_seconds=${total_seconds:-1}
+  
+  local quick_rate
+  if [[ $total_seconds -gt 0 ]]; then
+    quick_rate=$(awk "BEGIN{printf \"%.3f\", $total_scene_frames/$total_seconds}")
+  else
+    quick_rate="0.000"
+  fi
+  
+  # 確保 quick_rate 不為空
+  quick_rate=${quick_rate:-"0.000"}
+  
   info "抽樣共偵測到 $total_scene_frames 個場景變化，平均 $quick_rate /sec"
   
   # 回傳動態級別參數
-  if awk "BEGIN{exit !($quick_rate > 3.0)}"; then
-    echo "high 0.10 5"  # 高動態：scene_threshold=0.10, min_gap=5
-  elif awk "BEGIN{exit !($quick_rate > 1.0)}"; then
-    echo "medium 0.01 2"  # 中動態：scene_threshold=0.01, min_gap=2
-  else
-    if (( duration <= 1800 )); then
-      echo "low 0.004 1"   # 低動態：scene_threshold=0.004, min_gap=1
-    else
-      echo "low 0.008 3"   # 低動態：scene_threshold=0.008, min_gap=3
+  info "檢查 quick_rate: $quick_rate, duration: $duration"
+  
+  # 確保 duration 和 quick_rate 都是有效數字
+  duration=${duration:-0}
+  quick_rate=${quick_rate:-"0.000"}
+  
+  # 首先檢查 quick_rate 是否為有效數字並進行動態判斷
+  if [[ "$quick_rate" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+    if awk "BEGIN{exit !($quick_rate > 3.0)}"; then
+      echo "high 0.10 5"  # 高動態：scene_threshold=0.10, min_gap=5
+      return
+    elif awk "BEGIN{exit !($quick_rate > 1.0)}"; then
+      echo "medium 0.01 2"  # 中動態：scene_threshold=0.01, min_gap=2
+      return
     fi
+  fi
+  
+  # 如果 quick_rate 無效或為低動態，根據時長決定參數
+  if [[ "$duration" =~ ^[0-9]+$ ]] && (( duration > 0 )); then
+    if (( duration >= 421 && duration <= 1800 )); then
+      echo "low 0.003 0.5"   # 低動態：長片段用較低閾值
+    elif (( duration <= 420 )); then
+      echo "low 0.001 0.2"   # 低動態：短片段用極低閾值
+    else
+      echo "low 0.008 3"     # 低動態：超長片段用較高閾值
+    fi
+  else
+    # 容錯：如果所有檢查都失敗，使用安全的預設值
+    echo "medium 0.01 2"
   fi
 }
 
 extract_frames() {
   # 智能檢測影片動態程度並調整參數
   local dynamics_result=$(detect_video_dynamics "$RAW")
-  read -r dynamic_level scene_thr min_gap <<< "$dynamics_result"
+  info "動態檢測結果: $dynamics_result"
+  
+  # 解析動態參數，並設定預設值以防解析失敗
+  local dynamic_level="medium"
+  local scene_thr="0.01"
+  local min_gap="2"
+  
+  if [[ -n "$dynamics_result" ]]; then
+    read -r dynamic_level scene_thr min_gap <<< "$dynamics_result"
+  fi
+  
+  # 確保變數不為空
+  dynamic_level=${dynamic_level:-"medium"}
+  scene_thr=${scene_thr:-"0.01"}
+  min_gap=${min_gap:-"2"}
   
   info "檢測為 ${dynamic_level} 動態影片 (scene_threshold=${scene_thr}, min_gap=${min_gap})"
   
