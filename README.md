@@ -143,12 +143,6 @@ Key variables (set in `.env` or exported):
 
 ---
 
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
----
-
 ## Acknowledgements
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
