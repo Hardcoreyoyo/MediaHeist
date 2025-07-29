@@ -28,22 +28,26 @@ cp -r "$SCRIPT_DIR/Makefile" "$SCRIPT_DIR/scripts" "$SCRIPT_DIR/cmd/mediaheist/a
 echo "✓ assets 目錄更新完成"
 
 # 初始化 Go 模組（如果尚未初始化）
-if [[ ! -f "$SCRIPT_DIR/go.mod" ]]; then
+if [[ ! -f "$SCRIPT_DIR/cmd/mediaheist/go.mod" ]]; then
     echo "初始化 Go 模組..."
-    cd "$SCRIPT_DIR"
+    cd "$SCRIPT_DIR/cmd/mediaheist"
     go mod init mediaheist
 fi
 
-cd "$SCRIPT_DIR"
+
+cd "$SCRIPT_DIR/cmd/mediaheist"
+echo "now path: $(pwd)"
 
 # 建置不同平台的二進制檔案
 platforms=(
-    # "darwin/amd64"   # macOS Intel
-    "darwin/arm64"   # macOS Apple Silicon
-    # "linux/amd64"    # Linux x64
-    # "linux/arm64"    # Linux ARM64
-    # "windows/amd64"  # Windows x64
+    "darwin/arm64"
 )
+
+# "darwin/amd64"   # macOS Intel
+# "darwin/arm64"   # macOS Apple Silicon
+# "linux/amd64"    # Linux x64
+# "linux/arm64"    # Linux ARM64
+# "windows/amd64"  # Windows x64
 
 for platform in "${platforms[@]}"; do
     IFS='/' read -r GOOS GOARCH <<< "$platform"
@@ -58,7 +62,7 @@ for platform in "${platforms[@]}"; do
     GOOS="$GOOS" GOARCH="$GOARCH" go build \
         -ldflags="-s -w" \
         -o "$output_name" \
-        ./cmd/mediaheist
+        ./
     
     echo "✓ 完成: $output_name ($(du -h "$output_name" | cut -f1))"
 done
@@ -89,6 +93,9 @@ if [[ -n "${current_platform:-}" ]]; then
         echo "✓ 建立當前平台執行檔: $BUILD_DIR/$BINARY_NAME"
     fi
 fi
+
+echo "clean assets..."
+rm -rf "$SCRIPT_DIR/cmd/mediaheist/assets"
 
 echo ""
 echo "建置完成！輸出檔案位於: $BUILD_DIR/"
