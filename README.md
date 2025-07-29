@@ -93,6 +93,10 @@ make all LIST=urls.txt MAX_JOBS=8
 ./build_binary.sh
 ```
 
+#### screen shot
+
+![test](./static/screenshot.png)
+
 ---
 
 ## Workflow Overview
